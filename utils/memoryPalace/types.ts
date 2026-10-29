@@ -393,9 +393,10 @@ export interface EmbeddingConfig {
 
 export interface RemoteVectorConfig {
     enabled: boolean;
+    backend?: 'legacy' | 'shared'; // default legacy when absent
     supabaseUrl: string;        // e.g. https://xxxxx.supabase.co
     supabaseAnonKey: string;    // anon / public key
-    initialized: boolean;       // 是否已建表
+    initialized: boolean;       // legacy=是否已建表；shared=凭据可用
 }
 
 // ─── 检索结果 ─────────────────────────────────────────
