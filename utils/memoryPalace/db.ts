@@ -92,7 +92,7 @@ async function getAll<T>(storeName: string): Promise<T[]> {
 // ─── MemoryNode CRUD ──────────────────────────────────
 
 /** 读取远程向量配置（轻量，仅 localStorage 读取） */
-function getRemoteVectorConfig(): { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean } | null {
+function getRemoteVectorConfig(): { enabled: boolean; backend?: 'legacy' | 'shared'; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean } | null {
     try {
         const raw = localStorage.getItem('os_remote_vector_config');
         if (!raw) return null;

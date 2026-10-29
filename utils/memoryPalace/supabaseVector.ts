@@ -8,6 +8,17 @@
  */
 
 import type { RemoteVectorConfig, MemoryNode } from './types';
+import {
+    bulkArchiveSharedMemories,
+    bulkMoveSharedMemories,
+    fetchSharedByRoom,
+    getSharedMemoryCount,
+    pushSharedMemoryNodes,
+    searchSharedMemories,
+    tombstoneSharedMemory,
+    getSharedSession,
+} from './sharedMemory';
+import { getSharedPersonaBinding, getSharedMemoryConfig } from './sharedMemoryConfig';
 
 // ─── 初始化 SQL（用户需在 Supabase SQL Editor 运行一次） ──
 
@@ -149,6 +160,28 @@ function rpcUrl(config: RemoteVectorConfig, fn: string): string {
     return `${config.supabaseUrl.replace(/\/+$/, '')}/rest/v1/rpc/${fn}`;
 }
 
+function isSharedBackend(config: RemoteVectorConfig): boolean {
+    return (config.backend || 'legacy') === 'shared';
+}
+
+function resolveSharedConfig(config: RemoteVectorConfig, charId: string) {
+    const personaId = getSharedPersonaBinding(charId);
+    if (!personaId) throw new Error(`角色 ${charId} 未绑定 shared persona_id`);
+    const shared = getSharedMemoryConfig();
+    return {
+        remoteVectorConfig: config,
+        personaId,
+        endpoint: shared.endpoint,
+    };
+}
+
+async function resolveSharedConfigForMemoryId(config: RemoteVectorConfig, memoryId: string) {
+    const { MemoryNodeDB } = await import('./db');
+    const node = await MemoryNodeDB.getById(memoryId);
+    if (!node?.charId) throw new Error(`找不到记忆 ${memoryId} 的角色绑定`);
+    return resolveSharedConfig(config, node.charId);
+}
+
 // ─── 公共 API ────────────────────────────────────────
 
 /**
@@ -159,6 +192,17 @@ export async function testConnection(config: RemoteVectorConfig): Promise<{
     tableExists: boolean;
     message: string;
 }> {
+    if (isSharedBackend(config)) {
+        const hasSession = !!getSharedSession()?.access_token;
+        if (!config.supabaseUrl || !config.supabaseAnonKey) {
+            return { ok: false, tableExists: false, message: '缺少共享后端 Supabase URL 或 anon key' };
+        }
+        return {
+            ok: true,
+            tableExists: true,
+            message: hasSession ? '共享后端凭据可用，当前会话已登录' : '共享后端凭据可用，请继续登录共享账号',
+        };
+    }
     try {
         const res = await fetch(restUrl(config, '/memory_vectors?select=memory_id&limit=1'), {
             headers: headers(config),
@@ -168,14 +212,12 @@ export async function testConnection(config: RemoteVectorConfig): Promise<{
             return { ok: true, tableExists: true, message: '连接成功，表已就绪' };
         }
         if (res.status === 404 || res.status === 406) {
-            // Table doesn't exist — PostgREST returns 404 or specific error
             return { ok: true, tableExists: false, message: '连接成功，但表尚未创建（请运行初始化 SQL）' };
         }
         if (res.status === 401) {
             return { ok: false, tableExists: false, message: '认证失败：请检查 anon key' };
         }
         const body = await res.text().catch(() => '');
-        // Check for "relation does not exist" error
         if (body.includes('does not exist') || body.includes('relation')) {
             return { ok: true, tableExists: false, message: '连接成功，但表尚未创建（请运行初始化 SQL）' };
         }
@@ -213,6 +255,18 @@ export async function upsertVector(
     dimensions: number,
     model?: string,
 ): Promise<boolean> {
+    if (isSharedBackend(config)) {
+        try {
+            await pushSharedMemoryNodes(
+                resolveSharedConfig(config, charId),
+                [node],
+                { embeddingByNodeId: { [node.id]: { vector, dimensions, model } } },
+            );
+            return true;
+        } catch {
+            return false;
+        }
+    }
     try {
         const vecArray = vectorToWireArray(vector);
         const body = {
@@ -269,6 +323,27 @@ export async function upsertVectorBatch(
     }[],
 ): Promise<boolean> {
     if (items.length === 0) return true;
+    if (isSharedBackend(config)) {
+        try {
+            const byChar = new Map<string, typeof items>();
+            for (const item of items) {
+                if (!byChar.has(item.charId)) byChar.set(item.charId, []);
+                byChar.get(item.charId)!.push(item);
+            }
+            for (const [charId, chunk] of byChar) {
+                const embeddingByNodeId: Record<string, { vector: number[] | Float32Array | Uint8Array; dimensions: number; model?: string }> = {};
+                for (const item of chunk) embeddingByNodeId[item.node.id] = { vector: item.vector, dimensions: item.dimensions, model: item.model };
+                await pushSharedMemoryNodes(
+                    resolveSharedConfig(config, charId),
+                    chunk.map(item => item.node),
+                    { embeddingByNodeId },
+                );
+            }
+            return true;
+        } catch {
+            return false;
+        }
+    }
     try {
         const body = items.map(item => {
             const vecArray = vectorToWireArray(item.vector);
@@ -326,6 +401,7 @@ export async function searchVectors(
     charId: string,
     threshold: number = 0.3,
     topK: number = 20,
+    options?: { model?: string; dimensions?: number },
 ): Promise<{
     memoryId: string;
     content: string;
@@ -346,6 +422,18 @@ export async function searchVectors(
     isSummary: boolean;
     eventBoxId: string | null;
 }[]> {
+    if (isSharedBackend(config)) {
+        const model = options?.model || '';
+        const dimensions = Number(options?.dimensions || 0);
+        if (!model || !dimensions) throw new Error('shared 检索需要 embedding model + dimensions');
+        return searchSharedMemories(resolveSharedConfig(config, charId), queryVector, {
+            model,
+            dimensions,
+            threshold,
+            topK,
+        });
+    }
+
     const vecArray = vectorToWireArray(queryVector);
 
     const res = await fetch(rpcUrl(config, 'match_vectors'), {
@@ -399,6 +487,13 @@ export async function fetchRemoteByRoom(
     room: string,
     limit: number = 50,
 ): Promise<MemoryNode[]> {
+    if (isSharedBackend(config)) {
+        try {
+            return await fetchSharedByRoom(resolveSharedConfig(config, charId), charId, room, limit);
+        } catch {
+            return [];
+        }
+    }
     try {
         const params = new URLSearchParams({
             select: 'memory_id,char_id,content,room,importance,tags,mood,valence,arousal,created_at,last_accessed_at,access_count,pinned_until,source_id,origin,archived,is_summary,event_box_id',
@@ -423,7 +518,7 @@ export async function fetchRemoteByRoom(
             mood: row.mood || '',
             valence: typeof row.valence === 'number' ? row.valence : undefined,
             arousal: typeof row.arousal === 'number' ? row.arousal : undefined,
-            embedded: true, // 远程就是向量表，默认视为已 embedded
+            embedded: true,
             createdAt: Number(row.created_at) || 0,
             lastAccessedAt: Number(row.last_accessed_at) || 0,
             accessCount: Number(row.access_count) || 0,
@@ -449,8 +544,15 @@ export async function bulkSetArchived(
     archived: boolean,
 ): Promise<boolean> {
     if (memoryIds.length === 0) return true;
+    if (isSharedBackend(config)) {
+        try {
+            const shared = await resolveSharedConfigForMemoryId(config, memoryIds[0]);
+            return await bulkArchiveSharedMemories(shared, memoryIds, archived);
+        } catch {
+            return false;
+        }
+    }
     try {
-        // PostgREST `in.(...)` filter
         const idList = memoryIds.map(id => encodeURIComponent(id)).join(',');
         const res = await fetch(restUrl(config, `/memory_vectors?memory_id=in.(${idList})`), {
             method: 'PATCH',
@@ -480,6 +582,14 @@ export async function bulkSetRoom(
     room: string,
 ): Promise<boolean> {
     if (memoryIds.length === 0) return true;
+    if (isSharedBackend(config)) {
+        try {
+            const shared = await resolveSharedConfigForMemoryId(config, memoryIds[0]);
+            return await bulkMoveSharedMemories(shared, memoryIds, room);
+        } catch {
+            return false;
+        }
+    }
     try {
         const idList = memoryIds.map(id => encodeURIComponent(id)).join(',');
         const res = await fetch(restUrl(config, `/memory_vectors?memory_id=in.(${idList})`), {
@@ -500,6 +610,15 @@ export async function bulkSetRoom(
  * 删除向量
  */
 export async function deleteVector(config: RemoteVectorConfig, memoryId: string): Promise<boolean> {
+    if (isSharedBackend(config)) {
+        try {
+            const shared = await resolveSharedConfigForMemoryId(config, memoryId);
+            await tombstoneSharedMemory(shared, memoryId);
+            return true;
+        } catch {
+            return false;
+        }
+    }
     try {
         const res = await fetch(restUrl(config, `/memory_vectors?memory_id=eq.${encodeURIComponent(memoryId)}`), {
             method: 'DELETE',
@@ -515,6 +634,14 @@ export async function deleteVector(config: RemoteVectorConfig, memoryId: string)
  * 获取远程向量数量（用于 UI 显示）
  */
 export async function getVectorCount(config: RemoteVectorConfig, charId?: string): Promise<number> {
+    if (isSharedBackend(config)) {
+        try {
+            if (!charId) return 0;
+            return await getSharedMemoryCount(resolveSharedConfig(config, charId));
+        } catch {
+            return 0;
+        }
+    }
     try {
         const filter = charId ? `&char_id=eq.${encodeURIComponent(charId)}` : '';
         const res = await fetch(restUrl(config, `/memory_vectors?select=memory_id${filter}`), {
