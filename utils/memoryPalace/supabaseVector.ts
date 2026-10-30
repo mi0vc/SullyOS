@@ -1,3 +1,4 @@
+import { observeCloudContent } from './compatRevision';
 /**
  * Memory Palace — Supabase pgvector 远程向量存储
  *
@@ -352,9 +353,10 @@ export async function searchVectors(
 }[]> {
     const vecArray = vectorToWireArray(queryVector);
 
+    const readHeaders = await headers(config);
     const res = await fetch(rpcUrl(config, 'match_vectors'), {
         method: 'POST',
-        headers: await headers(config),
+        headers: readHeaders,
         body: JSON.stringify({
             query_embedding: `[${vecArray.join(',')}]`,
             match_char_id: isCompat(config) ? compatPersona(charId, config) : charId,
@@ -368,6 +370,7 @@ export async function searchVectors(
     }
 
     const data = await res.json();
+    if(isCompat(config)) observeCloudContent(config,compatPersona(charId,config),data||[],readHeaders);
     return (data || []).map((row: any) => ({
         memoryId: row.memory_id,
         content: row.content,
@@ -412,11 +415,13 @@ export async function fetchRemoteByRoom(
             order: 'importance.desc,last_accessed_at.desc',
             limit: String(limit),
         });
+        const readHeaders = await headers(config);
         const res = await fetch(restUrl(config, `/memory_vectors?${params.toString()}`), {
-            headers: await headers(config),
+            headers: readHeaders,
         });
         if (!res.ok) return [];
         const rows = await res.json();
+        if(isCompat(config)) observeCloudContent(config,compatPersona(charId,config),rows||[],readHeaders);
         return (rows || []).map((row: any): MemoryNode => ({
             id: row.memory_id,
             charId: charId,
