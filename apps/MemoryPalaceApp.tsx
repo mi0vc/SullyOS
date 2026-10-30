@@ -1779,6 +1779,7 @@ export default function MemoryPalaceApp() {
             const { testConnection } = await import('../utils/memoryPalace/supabaseVector');
             if(rvCompat){if(!activeCharacterId)throw new Error('请先选择角色'); if(rvEmail&&rvPassword){await compatLogin({enabled:true,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,initialized:false},rvEmail,rvPassword);setRvPassword('');}bindCompat(activeCharacterId,rvPersona,{...remoteVectorConfig,supabaseUrl:rvUrl,supabaseAnonKey:rvKey});}
             const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false, compatShared:rvCompat });
+            if(rvCompat && result.ok && result.tableExists) { const { compatHeaders } = await import('../utils/memoryPalace/sullyosCompat'); const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true}; const res=await fetch(new URL('/rest/v1/memory_vectors',rvUrl).href+'?select=memory_id&char_id=eq.'+encodeURIComponent(rvPersona)+'&limit=1',{headers:{apikey:rvKey,...await compatHeaders(c)}}); if(!res.ok)throw new Error('角色验证失败'); const rows=await res.json(); if(!rows.length)throw new Error('当前账号下未找到此云端角色的记忆，请核对角色编号'); }
             if (result.ok && result.tableExists) setRvTestResult('[ok]' + result.message);
             else if (result.ok) setRvTestResult('[warn]' + result.message);
             else setRvTestResult('[err]' + result.message);
