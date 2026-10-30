@@ -119,7 +119,7 @@ export async function hybridSearch(
     // 落在 study 房间，imp 衰减过）。
     // 结论：候选池不应作为召回广度的旋钮。精准度靠 per-message 多路搜
     // + imp floor 在 pipeline 层解决，候选池 30 已足够。
-    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig, prefetch?.allVectors);
+    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig, prefetch?.allVectors, embeddingConfig.model);
 
     // 3. BM25 搜索（排除 archived 节点 —— 它们已被压入 EventBox summary）
     const allNodes = prefetch?.allNodes ?? await MemoryNodeDB.getByCharId(charId);

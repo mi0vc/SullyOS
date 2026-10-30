@@ -159,7 +159,7 @@ export async function fetchRelatedMemoriesForExtraction(
                 }
                 const batch = vectors.slice(i, i + CONCURRENCY);
                 const batchResults = await Promise.all(
-                    batch.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK, remoteCfg))
+                    batch.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK, remoteCfg, undefined, embeddingConfig.model))
                 );
                 searchResults.push(...batchResults);
                 consumed = i + batch.length;

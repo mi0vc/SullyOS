@@ -109,11 +109,13 @@ export async function vectorSearch(
      * 远程路径不消费这个字段。
      */
     prefetchedVectors?: MemoryVector[],
+    embeddingModel?: string,
 ): Promise<VectorSearchResult[]> {
     // ─── 远程路径：Supabase pgvector ─────────────────
     // 注意：远程 RPC 已内置 archived=false 过滤
     if (remoteConfig?.enabled && remoteConfig.initialized && !remoteSearchBroken) {
         try {
+            if(remoteConfig.compatShared && (embeddingModel !== 'BAAI/bge-m3' || queryVector.length !== 1024)) throw new Error('Shared memory requires BAAI/bge-m3 1024');
             const remoteResults = await remoteSearch(remoteConfig, queryVector, charId, threshold, topK);
             if (remoteResults.length > 0) {
                 // 远程结果已包含内容，构建轻量 MemoryNode（带 EventBox 字段 + Russell 情感 + 置顶 + 衍生来源）
