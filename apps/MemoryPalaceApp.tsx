@@ -1,1 +1,1 @@
-PLACEHOLDER_APP
+__FROM_FILE__/tmp/push_app.txt
