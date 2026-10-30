@@ -401,7 +401,7 @@ async function compressEventBox(
     }
     // 远程批量加速（与上面 per-node sync 重复但幂等）
     if (remoteCfg) {
-        await bulkSetArchived(remoteCfg, liveIds, true).catch(() => {});
+        await bulkSetArchived(remoteCfg, liveIds, true, box.charId).catch(() => {});
     }
 
     // 7. 更新 box 状态
@@ -582,7 +582,7 @@ async function regenerateEventBoxSummaryUnlocked(
     }
 
     const freshBox = committed.box;
-    if (remoteCfg) await bulkSetArchived(remoteCfg, committed.archived.map(node => node.id), true).catch(() => {});
+    if (remoteCfg) await bulkSetArchived(remoteCfg, committed.archived.map(node => node.id), true, box.charId).catch(() => {});
 
     // 与自动压缩保持一致：若总结属于门牌房间，让新的干净结论继续沉淀。
     // 门牌失败不影响已经成功落库的总结与向量。

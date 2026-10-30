@@ -392,6 +392,7 @@ export interface EmbeddingConfig {
 // ─── 远程向量存储配置 (Supabase pgvector) ────────────
 
 export interface RemoteVectorConfig {
+    compatShared?: boolean;
     enabled: boolean;
     supabaseUrl: string;        // e.g. https://xxxxx.supabase.co
     supabaseAnonKey: string;    // anon / public key

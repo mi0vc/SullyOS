@@ -161,10 +161,10 @@ export async function runConsolidation(
         try {
             const tasks: Promise<boolean>[] = [];
             if (result.promoted.length > 0) {
-                tasks.push(bulkSetRoom(remoteConfig, result.promoted, 'bedroom'));
+                tasks.push(bulkSetRoom(remoteConfig, result.promoted, 'bedroom', charId));
             }
             if (result.evicted.length > 0) {
-                tasks.push(bulkSetRoom(remoteConfig, result.evicted, 'attic'));
+                tasks.push(bulkSetRoom(remoteConfig, result.evicted, 'attic', charId));
             }
             const oks = await Promise.all(tasks);
             const allOk = oks.every(Boolean);

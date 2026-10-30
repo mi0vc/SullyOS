@@ -1,0 +1,24 @@
+name: Apply reviewed SullyOS compatibility patch
+on:
+  push:
+    branches: [fix/sullyos-db-compat]
+    paths: ['scripts/apply-sullyos-compat.py', '.github/workflows/apply-sullyos-compat.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sullyos-db-compat
+      - name: Apply source transformations
+        run: |
+          python3 scripts/apply-sullyos-compat.py
+          test $(wc -l < apps/MemoryPalaceApp.tsx) -gt 6000
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/MemoryPalaceApp.tsx utils/memoryPalace
+          git commit -m 'Apply shared database compatibility wiring'
+          git push origin HEAD:fix/sullyos-db-compat

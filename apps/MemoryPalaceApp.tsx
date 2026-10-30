@@ -2,7 +2,7 @@ import { ContextBuilder } from '../utils/context';
 
 import MemoryMaintenancePanel from '../components/chat/MemoryMaintenancePanel';
 import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
-import SharedMemoryPanel from '../components/SharedMemoryPanel';
+import { bindCompat, compatLogin, readCompatBinding } from '../utils/memoryPalace/sullyosCompat';
 import { MemoryTimeText } from '../components/MemoryTimeText';
 import { relativeTimeEdit } from '../utils/memoryPalace/relativeTime';
 import { MemoryContentEditor } from '../components/MemoryContentEditor';
@@ -915,9 +915,15 @@ export default function MemoryPalaceApp() {
     const [rrTestResult, setRrTestResult] = useState<string | null>(null);
 
     // 远程向量存储配置
+    const [rvCompat,setRvCompat]=useState(!!remoteVectorConfig.compatShared);
+    const [rvEmail,setRvEmail]=useState('');
+    const [rvPassword,setRvPassword]=useState('');
+    const [rvPersona,setRvPersona]=useState(readCompatBinding(activeCharacterId||'',remoteVectorConfig));
+    useEffect(()=>{setRvPersona(readCompatBinding(activeCharacterId||'',remoteVectorConfig));},[activeCharacterId,remoteVectorConfig.supabaseUrl]);
     const [rvUrl, setRvUrl] = useState(remoteVectorConfig.supabaseUrl);
     const [rvKey, setRvKey] = useState(remoteVectorConfig.supabaseAnonKey);
     const [rvTestResult, setRvTestResult] = useState('');
+    useEffect(()=>{setRvTestResult('');},[rvUrl,rvKey,rvPersona,rvCompat,activeCharacterId]);
     const [rvTesting, setRvTesting] = useState(false);
     const [rvSyncing, setRvSyncing] = useState(false);
     const [showInitSQL, setShowInitSQL] = useState(false);
@@ -1771,7 +1777,9 @@ export default function MemoryPalaceApp() {
         setRvTestResult('');
         try {
             const { testConnection } = await import('../utils/memoryPalace/supabaseVector');
-            const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false });
+            if(rvCompat){if(!activeCharacterId)throw new Error('请先选择角色'); if(rvEmail&&rvPassword){await compatLogin({enabled:true,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,initialized:false},rvEmail,rvPassword);setRvPassword('');}bindCompat(activeCharacterId,rvPersona,{...remoteVectorConfig,supabaseUrl:rvUrl,supabaseAnonKey:rvKey});}
+            const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false, compatShared:rvCompat });
+            if(rvCompat && result.ok && result.tableExists) { const { compatHeaders } = await import('../utils/memoryPalace/sullyosCompat'); const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true}; const res=await fetch(new URL('/rest/v1/memory_vectors',rvUrl).href+'?select=memory_id&char_id=eq.'+encodeURIComponent(rvPersona)+'&limit=1',{headers:{apikey:rvKey,...await compatHeaders(c)}}); if(!res.ok)throw new Error('角色验证失败'); const rows=await res.json(); if(!rows.length)throw new Error('当前账号下未找到此云端角色的记忆，请核对角色编号'); }
             if (result.ok && result.tableExists) setRvTestResult('[ok]' + result.message);
             else if (result.ok) setRvTestResult('[warn]' + result.message);
             else setRvTestResult('[err]' + result.message);
@@ -1782,7 +1790,7 @@ export default function MemoryPalaceApp() {
     // 远程向量：保存配置
     const handleSaveRemoteVector = () => {
         const initialized = rvTestResult.startsWith('[ok]');
-        updateRemoteVectorConfig({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized });
+        updateRemoteVectorConfig({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized, compatShared:rvCompat });
         addToast('远程向量存储配置已保存', 'success');
     };
 
@@ -2053,7 +2061,7 @@ export default function MemoryPalaceApp() {
         // 删向量（远程同步）
         if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
             import('../utils/memoryPalace/supabaseVector').then(({ deleteVector }) =>
-                deleteVector(remoteVectorConfig, nodeId).catch(() => {})
+                deleteVector(remoteVectorConfig, nodeId, activeCharacterId || undefined).catch(() => {})
             );
         }
         // 删节点
@@ -3196,7 +3204,7 @@ export default function MemoryPalaceApp() {
                     </span>
                 </div>}
 
-                {!guideSetup && <div style={{ marginBottom: 16 }}><SharedMemoryPanel /></div>}
+
 
                 {/* 副 API 配置 */}
                 <div style={{ background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0', marginBottom: 16 }}>
@@ -3787,6 +3795,7 @@ export default function MemoryPalaceApp() {
                         </div>
                     </div>
 
+                    {!rvCompat && <>
                     {/* 图文教程 */}
                     <a href="https://www.kdocs.cn/l/ctifnJA5VGA3" target="_blank" rel="noopener noreferrer"
                         style={{
@@ -3854,6 +3863,8 @@ create table if not exists memory_vectors (
                         <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>复制此 SQL → Supabase Dashboard → SQL Editor → 运行</div>
                     </div>
 
+                    </>}
+                    <div><label><input type="checkbox" checked={rvCompat} onChange={e=>setRvCompat(e.target.checked)}/>使用已有共享库兼容格式（无需初始化 SQL）</label>{rvCompat&&<div><p>向量模型必须为 BAAI/bge-m3，1024 维。</p><input className={inputClass} placeholder="云端角色编号" value={rvPersona} onChange={e=>setRvPersona(e.target.value)}/><input className={inputClass} type="email" placeholder="共享库邮箱" value={rvEmail} onChange={e=>setRvEmail(e.target.value)}/><input className={inputClass} type="password" placeholder="共享库密码（不保存）" value={rvPassword} onChange={e=>setRvPassword(e.target.value)}/></div>}</div>
                     {/* Project URL & anon key */}
                     <div style={{ marginTop: 12 }}>
                         <label className={labelClass}>PROJECT URL</label>
