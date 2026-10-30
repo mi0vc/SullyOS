@@ -1,2 +1,0 @@
-// verify push works
-console.log('ok');
