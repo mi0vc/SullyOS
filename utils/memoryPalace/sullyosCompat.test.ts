@@ -14,3 +14,7 @@ it('partial writes fail',async()=>{bindCompat('a',p,c);vi.mocked(fetch).mockReso
 it('unbound write makes no fetch',async()=>{await expect(compatWrite(c,'delete',[],['m'],{},'missing')).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();});
 it('refresh coalesces',async()=>{seed('owner',1);vi.mocked(fetch).mockResolvedValue({ok:true,json:async()=>({access_token:'new',refresh_token:'new-refresh',expires_in:3600,user:{id:'owner'}})} as any);const r=await Promise.all([compatHeaders(c),compatHeaders(c)]);expect(fetch).toHaveBeenCalledTimes(1);expect(r[0].Authorization).toBe('Bearer new');expect(r[1]).toEqual(r[0]);});
 it('wrong refresh owner rejected',async()=>{seed('owner',1);vi.mocked(fetch).mockResolvedValue({ok:true,json:async()=>({access_token:'bad',user:{id:'other'}})} as any);await expect(compatHeaders(c)).rejects.toThrow('账号不匹配');expect(JSON.parse(localStorage.getItem(key)!).user.id).toBe('owner');});
+
+it('blank URL does not crash settings',()=>expect(readCompatBinding('a',{...c,supabaseUrl:''})).toBe(''));
+it('incomplete URL does not crash settings',()=>expect(readCompatBinding('a',{...c,supabaseUrl:'https://'})).toBe(''));
+it('saved role survives re-reading configuration',()=>{bindCompat('a',p,c);expect(readCompatBinding('a',{...c})).toBe(p);});
