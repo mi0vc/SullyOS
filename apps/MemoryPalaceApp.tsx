@@ -1808,6 +1808,22 @@ export default function MemoryPalaceApp() {
         }
     };
 
+    // Read cloud memories into the same local stores used by rooms and recall.
+    const pullCloudMemories = useCallback(async () => {
+        if (!activeCharacterId || !remoteVectorConfig.enabled || !remoteVectorConfig.initialized) return;
+        setRvSyncing(true);
+        try {
+            const { pullRemoteMemories } = await import('../utils/memoryPalace/pullRemote');
+            const result = await pullRemoteMemories(remoteVectorConfig, activeCharacterId);
+            await loadStats();
+            addToast(`云端记忆读取完成：新增 ${result.added} 条，已有 ${result.existing} 条`, 'success');
+        } catch (e: any) { addToast(`云端记忆读取失败：${e.message}`, 'error'); }
+        finally { setRvSyncing(false); }
+    }, [activeCharacterId, remoteVectorConfig, loadStats]);
+    useEffect(() => {
+        if (remoteVectorConfig.compatShared && remoteVectorConfig.enabled && remoteVectorConfig.initialized) void pullCloudMemories();
+    }, [pullCloudMemories]);
+
     // 远程向量：关闭
     const handleDisableRemoteVector = () => {
         updateRemoteVectorConfig({ enabled: false, initialized: false });
@@ -3929,6 +3945,7 @@ create table if not exists memory_vectors (
                         保存配置
                     </button>
 
+                    {remoteVectorConfig.enabled && remoteVectorConfig.initialized && <button className={inputClass} onClick={pullCloudMemories} disabled={rvSyncing}>{rvSyncing ? '正在读取云端记忆...' : '读取云端记忆到记忆宫殿'}</button>}
                     {/* 已启用后的操作 */}
                     {remoteVectorConfig.enabled && remoteVectorConfig.initialized && (
                         <button onClick={handleSyncToRemote} disabled={rvSyncing}
