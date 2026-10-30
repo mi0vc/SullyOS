@@ -13,9 +13,7 @@ export async function pullRemoteMemories(config: RemoteVectorConfig, charId: str
     let existing = 0;
     for (let offset = 0; ; offset += 200) {
         const query = new URLSearchParams({ select: '*', char_id: `eq.${persona}`, order: 'memory_id.asc', limit: '200', offset: String(offset) });
-        const response = await fetch(new URL('/rest/v1/memory_vectors?' + query, config.supabaseUrl).href, {
-            headers: { apikey: config.supabaseAnonKey, ...authorization },
-        });
+        const response = await fetch(new URL('/rest/v1/memory_vectors?' + query, config.supabaseUrl).href, { headers: { apikey: config.supabaseAnonKey, ...authorization } });
         if (!response.ok) throw new Error(`读取云端记忆失败：${response.status}`);
         const rows = await response.json();
         if (!Array.isArray(rows)) throw new Error('云端记忆格式错误');
@@ -25,21 +23,16 @@ export async function pullRemoteMemories(config: RemoteVectorConfig, charId: str
             if (ids.has(row.memory_id)) throw new Error('云端分页返回重复记忆，请重试');
             ids.add(row.memory_id);
             const local = await MemoryNodeDB.getById(row.memory_id);
+            const mappedRoom = resolveMemoryScoringRoom(row.room);
             if (local) {
                 if (local.charId !== charId) throw new Error('记忆编号已属于其他本地角色，已停止导入');
+                if (local.room === 'living_room' && mappedRoom !== 'living_room') await MemoryNodeDB.save({ ...local, room: mappedRoom });
                 existing++;
                 continue;
             }
             const values = typeof row.vector === 'string' ? JSON.parse(row.vector) : row.vector;
             if (!Array.isArray(values) || values.length !== Number(row.dimensions) || !values.length || !values.every((n: unknown) => typeof n === 'number' && Number.isFinite(n))) throw new Error('云端向量不完整，已停止导入');
-            const node: MemoryNode = {
-                id: row.memory_id, charId, content: row.content, room: resolveMemoryScoringRoom(row.room),
-                tags: Array.isArray(row.tags) ? row.tags : [], importance: row.importance ?? 5, mood: row.mood || '',
-                embedded: true, createdAt: Number(row.created_at) || 0, lastAccessedAt: Number(row.last_accessed_at) || 0,
-                accessCount: Number(row.access_count) || 0, valence: row.valence ?? undefined, arousal: row.arousal ?? undefined,
-                pinnedUntil: row.pinned_until == null ? null : Number(row.pinned_until), sourceId: row.source_id ?? null,
-                origin: row.origin ?? undefined, archived: !!row.archived, isBoxSummary: !!row.is_summary, eventBoxId: row.event_box_id ?? null,
-            };
+            const node: MemoryNode = { id: row.memory_id, charId, content: row.content, room: mappedRoom, tags: Array.isArray(row.tags) ? row.tags : [], importance: row.importance ?? 5, mood: row.mood || '', embedded: true, createdAt: Number(row.created_at) || 0, lastAccessedAt: Number(row.last_accessed_at) || 0, accessCount: Number(row.access_count) || 0, valence: row.valence ?? undefined, arousal: row.arousal ?? undefined, pinnedUntil: row.pinned_until == null ? null : Number(row.pinned_until), sourceId: row.source_id ?? null, origin: row.origin ?? undefined, archived: !!row.archived, isBoxSummary: !!row.is_summary, eventBoxId: row.event_box_id ?? null };
             entries.push({ node, vector: { memoryId: node.id, charId, vector: new Float32Array(values), dimensions: values.length, model: row.model ?? undefined } });
         }
         if (isCompat(config)) observeCloudContent(config, persona, rows, authorization);
