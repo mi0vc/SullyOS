@@ -133,11 +133,11 @@ create policy "Allow all access" on memory_vectors
 
 // ─── Supabase REST helpers ───────────────────────────
 
-function headers(config: RemoteVectorConfig): Record<string, string> {
+async function headers(config: RemoteVectorConfig): Promise<Record<string, string>> {
     return {
         'apikey': config.supabaseAnonKey,
         'Authorization': `Bearer ${config.supabaseAnonKey}`,
-        ...compatHeaders(config),
+        ...await compatHeaders(config),
         'Content-Type': 'application/json',
         'Prefer': 'return=minimal',
     };
@@ -163,7 +163,7 @@ export async function testConnection(config: RemoteVectorConfig): Promise<{
 }> {
     try {
         const res = await fetch(restUrl(config, '/memory_vectors?select=memory_id&limit=1'), {
-            headers: headers(config),
+            headers: await headers(config),
         });
 
         if (res.status === 200) {
@@ -245,7 +245,7 @@ export async function upsertVector(
         const res = await fetch(restUrl(config, '/memory_vectors'), {
             method: 'POST',
             headers: {
-                ...headers(config),
+                ...await headers(config),
                 'Prefer': 'resolution=merge-duplicates,return=minimal',
             },
             body: JSON.stringify(body),
@@ -304,7 +304,7 @@ export async function upsertVectorBatch(
         const res = await fetch(restUrl(config, '/memory_vectors'), {
             method: 'POST',
             headers: {
-                ...headers(config),
+                ...await headers(config),
                 'Prefer': 'resolution=merge-duplicates,return=minimal',
             },
             body: JSON.stringify(body),
@@ -354,10 +354,10 @@ export async function searchVectors(
 
     const res = await fetch(rpcUrl(config, 'match_vectors'), {
         method: 'POST',
-        headers: headers(config),
+        headers: await headers(config),
         body: JSON.stringify({
             query_embedding: `[${vecArray.join(',')}]`,
-            match_char_id: isCompat(config) ? compatPersona(charId) : charId,
+            match_char_id: isCompat(config) ? compatPersona(charId, config) : charId,
             match_threshold: threshold,
             match_count: topK,
         }),
@@ -406,14 +406,14 @@ export async function fetchRemoteByRoom(
     try {
         const params = new URLSearchParams({
             select: 'memory_id,char_id,content,room,importance,tags,mood,valence,arousal,created_at,last_accessed_at,access_count,pinned_until,source_id,origin,archived,is_summary,event_box_id',
-            char_id: `eq.${isCompat(config) ? compatPersona(charId) : charId}`,
+            char_id: `eq.${isCompat(config) ? compatPersona(charId, config) : charId}`,
             room: `eq.${room}`,
             archived: 'eq.false',
             order: 'importance.desc,last_accessed_at.desc',
             limit: String(limit),
         });
         const res = await fetch(restUrl(config, `/memory_vectors?${params.toString()}`), {
-            headers: headers(config),
+            headers: await headers(config),
         });
         if (!res.ok) return [];
         const rows = await res.json();
@@ -451,16 +451,17 @@ export async function bulkSetArchived(
     config: RemoteVectorConfig,
     memoryIds: string[],
     archived: boolean,
+    charId?: string,
 ): Promise<boolean> {
     if (memoryIds.length === 0) return true;
-    if(isCompat(config)) return compatWrite(config,'patch',[],memoryIds,{archived});
+    if(isCompat(config)) return compatWrite(config,'patch',[],memoryIds,{archived},charId);
     try {
         // PostgREST `in.(...)` filter
         const idList = memoryIds.map(id => encodeURIComponent(id)).join(',');
         const res = await fetch(restUrl(config, `/memory_vectors?memory_id=in.(${idList})`), {
             method: 'PATCH',
             headers: {
-                ...headers(config),
+                ...await headers(config),
                 'Prefer': 'return=minimal',
             },
             body: JSON.stringify({ archived }),
@@ -483,15 +484,16 @@ export async function bulkSetRoom(
     config: RemoteVectorConfig,
     memoryIds: string[],
     room: string,
+    charId?: string,
 ): Promise<boolean> {
     if (memoryIds.length === 0) return true;
-    if(isCompat(config)) return compatWrite(config,'patch',[],memoryIds,{room});
+    if(isCompat(config)) return compatWrite(config,'patch',[],memoryIds,{room},charId);
     try {
         const idList = memoryIds.map(id => encodeURIComponent(id)).join(',');
         const res = await fetch(restUrl(config, `/memory_vectors?memory_id=in.(${idList})`), {
             method: 'PATCH',
             headers: {
-                ...headers(config),
+                ...await headers(config),
                 'Prefer': 'return=minimal',
             },
             body: JSON.stringify({ room }),
@@ -505,12 +507,12 @@ export async function bulkSetRoom(
 /**
  * 删除向量
  */
-export async function deleteVector(config: RemoteVectorConfig, memoryId: string): Promise<boolean> {
-    if(isCompat(config)) return compatWrite(config,'delete',[],[memoryId]);
+export async function deleteVector(config: RemoteVectorConfig, memoryId: string, charId?: string): Promise<boolean> {
+    if(isCompat(config)) return compatWrite(config,'delete',[],[memoryId],{},charId);
     try {
         const res = await fetch(restUrl(config, `/memory_vectors?memory_id=eq.${encodeURIComponent(memoryId)}`), {
             method: 'DELETE',
-            headers: headers(config),
+            headers: await headers(config),
         });
         return res.ok;
     } catch {
@@ -523,11 +525,11 @@ export async function deleteVector(config: RemoteVectorConfig, memoryId: string)
  */
 export async function getVectorCount(config: RemoteVectorConfig, charId?: string): Promise<number> {
     try {
-        const filter = charId ? `&char_id=eq.${encodeURIComponent(isCompat(config) ? compatPersona(charId) : charId)}` : '';
+        const filter = charId ? `&char_id=eq.${encodeURIComponent(isCompat(config) ? compatPersona(charId, config) : charId)}` : '';
         const res = await fetch(restUrl(config, `/memory_vectors?select=memory_id${filter}`), {
             method: 'HEAD',
             headers: {
-                ...headers(config),
+                ...await headers(config),
                 'Prefer': 'count=exact',
             },
         });

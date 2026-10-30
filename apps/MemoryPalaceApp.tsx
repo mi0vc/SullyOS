@@ -918,8 +918,8 @@ export default function MemoryPalaceApp() {
     const [rvCompat,setRvCompat]=useState(!!remoteVectorConfig.compatShared);
     const [rvEmail,setRvEmail]=useState('');
     const [rvPassword,setRvPassword]=useState('');
-    const [rvPersona,setRvPersona]=useState(readCompatBinding(activeCharacterId||''));
-    useEffect(()=>{setRvPersona(readCompatBinding(activeCharacterId||''));},[activeCharacterId]);
+    const [rvPersona,setRvPersona]=useState(readCompatBinding(activeCharacterId||'',remoteVectorConfig));
+    useEffect(()=>{setRvPersona(readCompatBinding(activeCharacterId||'',remoteVectorConfig));},[activeCharacterId,remoteVectorConfig.supabaseUrl]);
     const [rvUrl, setRvUrl] = useState(remoteVectorConfig.supabaseUrl);
     const [rvKey, setRvKey] = useState(remoteVectorConfig.supabaseAnonKey);
     const [rvTestResult, setRvTestResult] = useState('');
@@ -1777,7 +1777,7 @@ export default function MemoryPalaceApp() {
         setRvTestResult('');
         try {
             const { testConnection } = await import('../utils/memoryPalace/supabaseVector');
-            if(rvCompat){if(!activeCharacterId)throw new Error('请先选择角色'); if(rvEmail&&rvPassword){await compatLogin({enabled:true,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,initialized:false},rvEmail,rvPassword);setRvPassword('');}bindCompat(activeCharacterId,rvPersona);}
+            if(rvCompat){if(!activeCharacterId)throw new Error('请先选择角色'); if(rvEmail&&rvPassword){await compatLogin({enabled:true,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,initialized:false},rvEmail,rvPassword);setRvPassword('');}bindCompat(activeCharacterId,rvPersona,{...remoteVectorConfig,supabaseUrl:rvUrl,supabaseAnonKey:rvKey});}
             const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false, compatShared:rvCompat });
             if (result.ok && result.tableExists) setRvTestResult('[ok]' + result.message);
             else if (result.ok) setRvTestResult('[warn]' + result.message);
@@ -2060,7 +2060,7 @@ export default function MemoryPalaceApp() {
         // 删向量（远程同步）
         if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
             import('../utils/memoryPalace/supabaseVector').then(({ deleteVector }) =>
-                deleteVector(remoteVectorConfig, nodeId).catch(() => {})
+                deleteVector(remoteVectorConfig, nodeId, activeCharacterId || undefined).catch(() => {})
             );
         }
         // 删节点
