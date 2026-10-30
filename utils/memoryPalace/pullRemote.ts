@@ -82,6 +82,7 @@ export async function pullRemoteMemories(config: RemoteVectorConfig, charId: str
     }
     if (isCompat(config) && compatPersona(charId, config) !== persona) throw new Error('角色绑定已切换，请重试');
     await MemoryNodeDB.saveVectorizedMany(entries);
+    // 导入完成后把旧记录的房间与自动标签对齐云端映射，避免它们继续留在默认客厅。
     const relocated = await refreshLocalMappings(config, charId, persona, authorization);
     return { added: entries.length, existing, relocated };
 }
