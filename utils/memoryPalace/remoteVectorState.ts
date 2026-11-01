@@ -12,3 +12,10 @@ export function resolveRemoteVectorInitialized(
     if (currentConfig.supabaseAnonKey.trim() !== nextConfig.supabaseAnonKey.trim()) return false;
     return true;
 }
+
+export function shouldPullRemoteMemoriesAfterSave(
+    config: Pick<RemoteVectorConfig, 'enabled' | 'initialized'>,
+    activeCharacterId?: string | null,
+): boolean {
+    return !!(activeCharacterId && config.enabled && config.initialized);
+}

@@ -59,7 +59,7 @@ import {
     makeCustomMemoryPalaceWaterline,
     resolveMemoryPalaceWaterline,
 } from '../utils/memoryPalace/waterline';
-import { resolveRemoteVectorInitialized } from '../utils/memoryPalace/remoteVectorState';
+import { resolveRemoteVectorInitialized, shouldPullRemoteMemoriesAfterSave } from '../utils/memoryPalace/remoteVectorState';
 
 const PixelHomeView = React.lazy(() => import('./pixelHome/PixelHomeView'));
 
@@ -1816,27 +1816,33 @@ export default function MemoryPalaceApp() {
                 if (readCompatBinding(activeCharacterId, nextConfig) !== rvPersona.trim()) throw new Error('角色绑定保存失败');
             }
             updateRemoteVectorConfig(nextConfig);
-            addToast(nextConfig.initialized ? '远程向量存储配置已保存' : '配置已保存，请测试连接后启用远程读写', nextConfig.initialized ? 'success' : 'info');
+            if (!nextConfig.initialized) {
+                addToast('配置已保存，请测试连接后启用远程读写', 'info');
+                return;
+            }
+            if (!shouldPullRemoteMemoriesAfterSave(nextConfig, activeCharacterId)) {
+                addToast('远程向量存储配置已保存', 'success');
+                return;
+            }
+            await pullCloudMemories(nextConfig);
         } catch (e: any) {
             addToast('保存失败：' + e.message, 'error');
         }
     };
 
     // Read cloud memories into the same local stores used by rooms and recall.
-    const pullCloudMemories = useCallback(async () => {
-        if (!activeCharacterId || !remoteVectorReady) return;
+    const pullCloudMemories = useCallback(async (configOverride?: typeof remoteVectorConfig) => {
+        const configToUse = configOverride || remoteVectorConfig;
+        if (!activeCharacterId || !configToUse.enabled || !configToUse.initialized) return;
         setRvSyncing(true);
         try {
             const { pullRemoteMemories } = await import('../utils/memoryPalace/pullRemote');
-            const result = await pullRemoteMemories(remoteVectorConfig, activeCharacterId);
+            const result = await pullRemoteMemories(configToUse, activeCharacterId);
             await loadStats();
             addToast(`云端记忆读取完成：新增 ${result.added} 条，已有 ${result.existing} 条`, 'success');
         } catch (e: any) { addToast(`云端记忆读取失败：${e.message}`, 'error'); }
         finally { setRvSyncing(false); }
-    }, [activeCharacterId, remoteVectorReady, remoteVectorConfig, loadStats]);
-    useEffect(() => {
-        if (remoteVectorConfig.compatShared && remoteVectorConfig.enabled && remoteVectorConfig.initialized) void pullCloudMemories();
-    }, [pullCloudMemories]);
+    }, [activeCharacterId, remoteVectorConfig, loadStats]);
 
     // 远程向量：关闭
     const handleDisableRemoteVector = () => {
