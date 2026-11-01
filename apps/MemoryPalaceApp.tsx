@@ -59,6 +59,7 @@ import {
     makeCustomMemoryPalaceWaterline,
     resolveMemoryPalaceWaterline,
 } from '../utils/memoryPalace/waterline';
+import { resolveRemoteVectorInitialized } from '../utils/memoryPalace/remoteVectorState';
 
 const PixelHomeView = React.lazy(() => import('./pixelHome/PixelHomeView'));
 
@@ -927,6 +928,7 @@ export default function MemoryPalaceApp() {
     const [rvTesting, setRvTesting] = useState(false);
     const [rvSyncing, setRvSyncing] = useState(false);
     const [showInitSQL, setShowInitSQL] = useState(false);
+    const remoteVectorReady = remoteVectorConfig.enabled && remoteVectorConfig.initialized;
 
     // 全局配置变更时同步到本地状态
     useEffect(() => {
@@ -1790,7 +1792,19 @@ export default function MemoryPalaceApp() {
     // 远程向量：保存配置
     const handleSaveRemoteVector = async () => {
         try {
-            const nextConfig = { enabled: true, supabaseUrl: rvUrl.trim(), supabaseAnonKey: rvKey.trim(), initialized: rvTestResult.startsWith('[ok]'), compatShared: rvCompat };
+            const nextSupabaseUrl = rvUrl.trim();
+            const nextSupabaseAnonKey = rvKey.trim();
+            const nextConfig = {
+                enabled: true,
+                supabaseUrl: nextSupabaseUrl,
+                supabaseAnonKey: nextSupabaseAnonKey,
+                initialized: resolveRemoteVectorInitialized(
+                    remoteVectorConfig,
+                    { supabaseUrl: nextSupabaseUrl, supabaseAnonKey: nextSupabaseAnonKey, compatShared: rvCompat },
+                    rvTestResult,
+                ),
+                compatShared: rvCompat,
+            };
             if (rvCompat) {
                 if (!activeCharacterId) throw new Error('请先选择角色');
                 if (rvEmail || rvPassword) {
@@ -1810,7 +1824,7 @@ export default function MemoryPalaceApp() {
 
     // Read cloud memories into the same local stores used by rooms and recall.
     const pullCloudMemories = useCallback(async () => {
-        if (!activeCharacterId || !remoteVectorConfig.enabled || !remoteVectorConfig.initialized) return;
+        if (!activeCharacterId || !remoteVectorReady) return;
         setRvSyncing(true);
         try {
             const { pullRemoteMemories } = await import('../utils/memoryPalace/pullRemote');
@@ -1819,7 +1833,7 @@ export default function MemoryPalaceApp() {
             addToast(`云端记忆读取完成：新增 ${result.added} 条，已有 ${result.existing} 条`, 'success');
         } catch (e: any) { addToast(`云端记忆读取失败：${e.message}`, 'error'); }
         finally { setRvSyncing(false); }
-    }, [activeCharacterId, remoteVectorConfig, loadStats]);
+    }, [activeCharacterId, remoteVectorReady, remoteVectorConfig, loadStats]);
     useEffect(() => {
         if (remoteVectorConfig.compatShared && remoteVectorConfig.enabled && remoteVectorConfig.initialized) void pullCloudMemories();
     }, [pullCloudMemories]);
@@ -3945,9 +3959,9 @@ create table if not exists memory_vectors (
                         保存配置
                     </button>
 
-                    {remoteVectorConfig.enabled && remoteVectorConfig.initialized && <button className={inputClass} onClick={pullCloudMemories} disabled={rvSyncing}>{rvSyncing ? '正在读取云端记忆...' : '读取云端记忆到记忆宫殿'}</button>}
+                    {remoteVectorReady && <button className={inputClass} onClick={pullCloudMemories} disabled={rvSyncing}>{rvSyncing ? '正在读取云端记忆...' : '读取云端记忆到记忆宫殿'}</button>}
                     {/* 已启用后的操作 */}
-                    {remoteVectorConfig.enabled && remoteVectorConfig.initialized && (
+                    {remoteVectorReady && (
                         <button onClick={handleSyncToRemote} disabled={rvSyncing}
                             style={{
                                 width: '100%', marginTop: 8, padding: '10px 0', borderRadius: 12,
