@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRemoteVectorInitialized } from './remoteVectorState';
+import { resolveRemoteVectorInitialized, shouldPullRemoteMemoriesAfterSave } from './remoteVectorState';
 
 describe('resolveRemoteVectorInitialized', () => {
     const baseConfig = {
@@ -18,6 +18,15 @@ describe('resolveRemoteVectorInitialized', () => {
                 '[ok]连接成功',
             ),
         ).toBe(true);
+    });
+
+    describe('shouldPullRemoteMemoriesAfterSave', () => {
+        it('returns true only when config is enabled+initialized and active character exists', () => {
+            expect(shouldPullRemoteMemoriesAfterSave({ enabled: true, initialized: true }, 'char-1')).toBe(true);
+            expect(shouldPullRemoteMemoriesAfterSave({ enabled: true, initialized: true }, '')).toBe(false);
+            expect(shouldPullRemoteMemoriesAfterSave({ enabled: false, initialized: true }, 'char-1')).toBe(false);
+            expect(shouldPullRemoteMemoriesAfterSave({ enabled: true, initialized: false }, 'char-1')).toBe(false);
+        });
     });
 
     it('keeps initialized when saving unchanged initialized config without retest', () => {
