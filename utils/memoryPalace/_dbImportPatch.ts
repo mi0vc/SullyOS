@@ -1,1 +1,1 @@
-import { normalizeMemoryNodeRecord } from './nodeNormalize';
+export const D = 4;

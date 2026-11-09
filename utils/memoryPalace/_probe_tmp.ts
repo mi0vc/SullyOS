@@ -1,1 +1,1 @@
-export type MemoryRoom = 'living_room';
+export const A = 1;

@@ -1,2 +1,1 @@
-/** 占位 */
-export {};
+export const B = 2;
