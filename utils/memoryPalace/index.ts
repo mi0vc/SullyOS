@@ -2,6 +2,9 @@
 export type { MemoryRoom, RoomConfig, MemoryEntity, MemoryNode, MemoryVector, MemoryLink, LinkType, BoxStatus, TopicBox, TopicContinuity, AnticipationStatus, Anticipation, MemoryBatch, PersonalityStyle, EmbeddingConfig, ScoredMemory, RemoteVectorConfig, EventBox, PlateRoom, PlateEntry, RoomPlate, DigestReport, DigestReportSection } from './types';
 export { ROOM_CONFIGS, ROOM_LABELS, getRoomLabel, PERSONALITY_WEIGHTS, EVENT_BOX_COMPRESSION_THRESHOLD, PLATE_ROOMS, PLATE_TITLES, PLATE_ENTRY_CAPS } from './types';
 export { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, MemoryBatchDB, TopicBoxDB, AnticipationDB, EventBoxDB, RoomPlateDB, DigestReportDB } from './db';
+/** 读取边界兜底：所有要交给 UI 渲染的记忆节点都应该走这里 */
+export { normalizeMemoryNodeRecord, normalizeMemoryNodeRecords } from './nodeNormalize';
+export { getAllNodesByCharId, getNodeById } from './nodeRead';
 export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 export { rerankDocuments } from './rerank'; export type { RerankApiConfig, RerankResult } from './rerank';
 export { extractMemoriesFromBuffer } from './extraction'; export { vectorizeAndStore, updateStoredMemoryNode, checkModelConsistency, rebuildAllVectors } from './vectorStore'; export type { UpdateStoredMemoryNodeResult } from './vectorStore';
@@ -16,8 +19,13 @@ export { advanceConversationEngagement, analyzeConversationEngagement, clearConv
 export { DEFAULT_MEMORY_PALACE_WATERLINE, MEMORY_PALACE_WATERLINE_PRESETS, resolveMemoryPalaceWaterline } from './waterline';
 export { processAnticipationLifecycle, fulfillAnticipation, disappointAnticipation, createAnticipation } from './anticipation';
 export { runCognitiveDigestion, incrementDigestRound, getDigestRoundCount, getLastDigestTs, detectPersonalityStyle } from './digestion'; export type { DigestResult } from './digestion';
-export { migrateOldMemories, getAvailableMonths, getAvailableChunks } from './migration'; export type { MigrationProgress } from './migration';
-export { bindMemoriesIntoEventBox, manuallyBindMemories, removeMemoryFromBox, reviveArchivedMemory, unbindAllLiveMemories } from './eventBox'; export { maybeCompressEventBoxes, compressAllEligibleBoxes, regenerateEventBoxSummary, hasSummaryReasoningLeak } from './eventBoxCompression'; export type { RegenerateEventBoxSummaryResult } from './eventBoxCompression';
-export { consolidateAllPlates, updatePlateFromBoxSummary, buildRoomPlatesInjection, formatRoomPlatesSection, isPlateRoom, bootstrapPlatesFromHistory, arePlatesEmpty, isPlateBootstrapDone, markPlateBootstrapDone, getBootstrapResume, setBootstrapResume, clearBootstrapResume } from './roomPlates';
-export { wipeAllMemoryPalace } from './wipe'; export type { WipeResult } from './wipe'; export { exportMemoryPalace, importMemoryPalace, isMemoryPalaceExportFile } from './export'; export type { MemoryPalaceExportFile, CharacterMemoryPalaceExport, ExportedVector, ImportResult } from './export';
-export { sharedMemoryConfigKey, getSharedMemoryConfig, updateSharedMemoryConfig } from './sharedMemoryConfig'; export { signInSharedMemory, clearSharedSession, getSharedSession, listSharedMemories, pullSharedMemoryEvents, pushSharedMemoryNodes, buildSharedPushOperation, SHARED_MEMORY_URL } from './sharedMemory'; export type { SharedMemoryConfig, SharedMemoryRecord, SharedMemorySession } from './sharedMemory';
+export { migrateOldMemories, getAvailableMonths, getAvailableChunks } from './migration';
+export { contextualizeMemory, contextualizeMemories, contextWindowFor, buildContextMessages, buildContextBatches } from './contextualize';
+export { manuallyBindMemories, removeMemoryFromBox, unbindAllLiveMemories } from './boxManagement';
+export { reviveArchivedMemory } from './autoArchive';
+export { generateEventBoxSummary, regenerateEventBoxSummary, buildBoxIndexText, applyBoxSummaryBudget } from './eventBox';
+export { wipeAllMemoryPalace } from './wipe';
+export { exportMemoryPalace } from './export';
+export { importMemoryPalace, isMemoryPalaceExportFile, BACKUP_FILE_PATTERN } from './importExportGuard';
+export { bootstrapPlatesFromHistory, markPlateBootstrapDone, getBootstrapResume, setBootstrapResume, clearBootstrapResume } from './plateBootstrap';
+export { runMemoryMaintenance, readMaintenanceState } from './maintenance';
