@@ -5,6 +5,7 @@ export { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, MemoryBatchDB, TopicBoxDB, 
 /** 读取边界兜底：所有要交给 UI 渲染的记忆节点都应该走这里 */
 export { normalizeMemoryNodeRecord, normalizeMemoryNodeRecords } from './nodeNormalize';
 export { getAllNodesByCharId, getNodeById } from './nodeRead';
+export { loadAllMemoryNodes, loadRoomMemoryNodes } from './memoryNodeRead';
 export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 export { rerankDocuments } from './rerank'; export type { RerankApiConfig, RerankResult } from './rerank';
 export { extractMemoriesFromBuffer } from './extraction'; export { vectorizeAndStore, updateStoredMemoryNode, checkModelConsistency, rebuildAllVectors } from './vectorStore'; export type { UpdateStoredMemoryNodeResult } from './vectorStore';
