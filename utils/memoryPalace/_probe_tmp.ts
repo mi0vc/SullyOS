@@ -1,4 +1,3 @@
-import React from 'react';
-import { getNodeById } from '../utils/memoryPalace/nodeRead';
+import { getAllNodesByCharId } from './nodeRead';
 
-export const probe = { getNodeById, React };
+export const probe = getAllNodesByCharId;
