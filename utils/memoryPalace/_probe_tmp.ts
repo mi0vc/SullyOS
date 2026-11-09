@@ -1,3 +1,5 @@
-import { ROOM_CONFIGS } from './types';
+import { normalizeMemoryNodeRecords } from './nodeNormalize';
 
-export function x() { return ROOM_CONFIGS; }
+export function check() {
+    return normalizeMemoryNodeRecords([]);
+}
