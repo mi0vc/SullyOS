@@ -6,8 +6,7 @@
  * 外层导航、对话和其他应用都还在。
  *
  * 真实逻辑仍然是 apps/MemoryPalaceApp.tsx，没有搬动任何业务代码。
- * 注意：这里用静态 import，不用 lazy，
- * 否则一、二、三号新手引导的展开状态可能被 Suspense 打断。
+ * 用静态 import 而非 lazy，避免影响新手引导的展开状态。
  */
 
 import React from 'react';
