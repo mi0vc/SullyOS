@@ -1,2 +1,2 @@
-/** 占位：用于验证构建 */
-export {};
+import { ROOM_CONFIGS } from './types';
+export const z = ROOM_CONFIGS;
