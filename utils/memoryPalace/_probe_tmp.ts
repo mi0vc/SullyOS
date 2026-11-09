@@ -1,5 +1,3 @@
-import { normalizeMemoryNodeRecords } from './nodeNormalize';
+import { getAllNodesByCharId } from './nodeRead';
 
-export function check() {
-    return normalizeMemoryNodeRecords([]);
-}
+export const probe = getAllNodesByCharId;
