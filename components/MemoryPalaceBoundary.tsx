@@ -1,20 +1,15 @@
-import React from 'react';
-
 /**
  * 记忆宫殿渲染垉。
  *
  * 历史教训：一条字段残缺的旧记忆就能让整个应用白屏（React #306），
  * 用户连「哪里坏了」都看不到。这里把崩溃收进卡片：
- * 页面壳还在，导航还能用，错误信息能复制出来定位。
- *
- * 数据层的 normalizeMemoryNodeRecord 已经先兑了一道底，
- * 这层垉是最后的保险绳——只要还有一条路径把 undefined 喂进渲染，
- * 就崩在这块区域里，不拖垮整个 App。
+ * 页面壳还在，导航还能用，错误信息能展开看。
  */
+
+import React from 'react';
 
 type Props = {
     children: React.ReactNode;
-    /** 用于在标签中标识是哪块区域崩了 */
     label?: string;
 };
 
@@ -34,7 +29,6 @@ export class MemoryPalaceBoundary extends React.Component<Props, State> {
     }
 
     componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-        // 控制台保留完整堆栈，方便在非压缩环境直接定位
         console.error('[记忆宫殿] 渲染出错', error, errorInfo);
         this.setState({ info: errorInfo?.componentStack || null });
     }
@@ -65,7 +59,6 @@ export class MemoryPalaceBoundary extends React.Component<Props, State> {
                     minHeight: '100%',
                     background: '#faf8ff',
                     color: '#3b3355',
-                    fontFamily: 'inherit',
                     boxSizing: 'border-box',
                 }}
             >
