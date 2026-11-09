@@ -1,2 +1,1 @@
-/** 占位：仅用于验证构建，随后删除 */
-export {};
+export type MemoryRoom = 'living_room';
