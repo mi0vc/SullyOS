@@ -1,2 +1,2 @@
-import { ROOM_CONFIGS } from './types';
-export const z = ROOM_CONFIGS;
+/** 占位：仅用于验证构建，随后删除 */
+export {};
