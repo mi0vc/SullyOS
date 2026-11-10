@@ -1,2 +1,1 @@
-import React from 'react';
-export default function MemoryPalaceApp(){return null;}
+__FULL_CONTENT_FROM_VERIFIED_BRANCH__
