@@ -14,11 +14,10 @@ import {
   INSTANT_CHAT_BLOCKER_HINTS, resolveInstantChatBlocker,
   type InstantChatGateInput,
 } from '../../utils/amsgDiagnostics';
-import { ActiveMsgStore, maskActiveMsgUserId } from '../../utils/activeMsgStore';
+import { ActiveMsgStore, isInstantChatSwitchedOn, maskActiveMsgUserId } from '../../utils/activeMsgStore';
 import { formatTaskTime } from '../../utils/amsg2Tasks';
 import { isWorkerUrlCleared } from '../../utils/amsgStateSync';
 import { rememberDetachedWorker } from '../../utils/amsgDetachedWorkers';
-import { buildCloudflareDashboardUrl } from '../../utils/workerDeploy';
 import { generateClientToken } from '../../utils/vapidGen';
 import { loadPushVapid, savePushVapid } from '../../utils/pushVapid';
 import {
@@ -30,6 +29,12 @@ import {
 } from '../../utils/cfProvision';
 import { isAmsgServerVersionAtLeast } from '../../utils/amsgWorkerVersion';
 import { trackEvent } from '../../utils/analytics';
+import {
+  getThirdPartyPushProviderMeta,
+  THIRD_PARTY_PUSH_PROVIDERS,
+  validateThirdPartyPushConfig,
+  type ThirdPartyPushProvider,
+} from '../../utils/amsgThirdPartyPush';
 
 // 满血链路吃满这些 worker 特性（amsg-server 2.6.0-next.4+）。探测不到端点（老部署
 // 404 → null）或缺任何一项，就亮「重新部署」提示——worker 跑在用户自己的账号里，
@@ -146,12 +151,19 @@ const REQUIRED_WORKER_FEATURES = [
 //            定时消息靠它等那一轮结束再生成。
 // 不比版本的话，旧粘贴部署会被误判为最新，问题全在 worker 侧静默发生。
 //
-// 3.1.0-next.1 修复云端数据清单与清理在分块大值与海量收件箱下的内存/CPU 耗尽。
-const REQUIRED_WORKER_VERSION = '3.1.0-next.1';
+// 3.1.0 修复云端数据清单与清理在分块大值与海量收件箱下的内存/CPU 耗尽；投递或某项清理出错时，
+// 其余库存清理照跑；D1 存储满与每日额度用完的报错带机读代码，界面能说清楚原因。
+const REQUIRED_WORKER_VERSION = '3.1.0';
+// 3.2.0-next 给任务占位加了租约令牌，并收紧了入参校验。前端没有用到新能力，门槛保持 3.1.0；
+// Worker 自动更新会带上新版，不必让旧部署重新粘贴。
+// 3.2.0-next.2 把解不开的旧数据报成 STORED_DATA_UNDECRYPTABLE。前端对新旧两种报法都认得，
+// 门槛同样不动。
+const WORKER_VERSION_LAG_ACK = '3.2.0-next.2';
 
-/** 装着打包好的 worker 代码的部署仓库：fork 它 → 在 Cloudflare 连上 → 以后点 Sync fork 更新。 */
-const WORKERS_REPO_URL = 'https://github.com/Tosd0/sullyos-workers';
-const SETUP_WALKTHROUGH_URL = 'https://github.com/qegj567-cloud/SullyOS/blob/master/docs/amsg2-setup-walkthrough.md';
+/** 手动配置的图文教程，只在用户展开「我要手动配置」后出现。 */
+const MANUAL_SETUP_TUTORIAL_URL = 'https://discord.com/channels/1487742660314923100/1533520151784460449';
+/** workers.dev 在当前网络连不上时怎么直连的教程，挂在 Worker 地址输入框下面。 */
+const DIRECT_CONNECT_TUTORIAL_URL = 'https://discord.com/channels/1487742660314923100/1536968535727677450';
 /** 一键部署要的那枚 API Token 在这里建。 */
 const CF_TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
 
@@ -189,12 +201,37 @@ const DIAGNOSTIC_STYLES: Record<AmsgDiagnosticLevel, { dot: string; text: string
   unknown: { dot: 'bg-slate-300', text: 'text-slate-400', word: '查不到' },
 };
 
-/** 刚生成的密钥明文：输入框是 password 型，只能在这一处让用户看见并手动复制。 */
-const SecretReveal: React.FC<{ value: string; className?: string }> = ({ value, className = '' }) => (
-  <p className={`font-mono text-[10px] leading-relaxed text-slate-500 break-all bg-white border border-slate-200 rounded-xl px-2 py-1.5 ${className}`}>
-    {value}
-  </p>
-);
+/** 刚生成的密钥明文：输入框是 password 型，只能在这一处让用户看见并复制。 */
+const SecretReveal: React.FC<{ value: string; className?: string }> = ({ value, className = '' }) => {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => setCopyState('idle'), [value]);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+  };
+  return (
+    <div className={`flex items-start gap-2 bg-white border border-slate-200 rounded-xl px-2 py-1.5 ${className}`}>
+      {/* body 全局 user-select:none，这里得单独放开，否则连手动复制都做不到 */}
+      <p
+        className="flex-1 font-mono text-[10px] leading-relaxed text-slate-500 break-all"
+        style={{ userSelect: 'all', WebkitUserSelect: 'all' }}
+      >
+        {value}
+      </p>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        className="shrink-0 text-[10px] font-bold text-slate-500 active:scale-95 transition-transform"
+      >
+        {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制'}
+      </button>
+    </div>
+  );
+};
 
 interface ActiveMsgGlobalSettingsModalProps {
   isOpen: boolean;
@@ -222,11 +259,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   const pushRequestIdRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [deployOpen, setDeployOpen] = useState(false);
-  // 手动粘贴部署：给没有 GitHub 账号的人留的退路，默认收着不干扰主流程。
-  const [pasteFallbackOpen, setPasteFallbackOpen] = useState(false);
-  // Deno 门面：workers.dev 在国内连不上时才需要，默认收着。
-  const [denoProxyOpen, setDenoProxyOpen] = useState(false);
+  // 手动配置：只给明确不想走一键部署的人看，默认收着。
+  const [manualSetupOpen, setManualSetupOpen] = useState(false);
   const [pushStatus, setPushStatus] = useState<ActiveMsg2PushStatus | null>(null);
   const [checkingPush, setCheckingPush] = useState(false);
   const [pushCheckError, setPushCheckError] = useState('');
@@ -246,6 +280,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   const [needsSubdomain, setNeedsSubdomain] = useState(false);
   const [desiredSubdomain, setDesiredSubdomain] = useState('');
   const [provisionError, setProvisionError] = useState('');
+  /** 账号里的同名库有旧数据、本机又没旧钥匙：记下是哪个账号，等用户确认清空后接着装。 */
+  const [staleDatabase, setStaleDatabase] = useState<{ accountId?: string } | null>(null);
 
   // 补装更新能力：老办法装的后端里没有 CF_API_TOKEN，点更新会被顶回来。
   // 粘一枚 token 就能就地补上，不用去 Cloudflare 面板。只在真的缺钥匙时才露出来。
@@ -390,7 +426,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             connected: Boolean(nextConfig.initializedAt),
             pushSubscribed: Boolean(nextPushStatus.hasSubscription),
             workerSupportsInstantChat: supported,
-          }, Boolean(nextConfig.instantChatEnabled));
+          }, isInstantChatSwitchedOn(nextConfig));
         }).catch(() => {
           if (requestId === pushRequestIdRef.current) setInstantChatSupported(false);
         });
@@ -447,8 +483,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     setInstantChatSupported(false);
     setAdvancedOpen(false);
     setDiagnosticsOpen(false);
-    setDeployOpen(false);
-    setPasteFallbackOpen(false);
+    setManualSetupOpen(false);
     // 两个明文密钥都要清：留到下次打开面板还挂在页面上，就是白白多摊一次。
     setGeneratedMasterKey('');
     setGeneratedServerToken('');
@@ -513,6 +548,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       workerUrl: config.workerUrl,
       serverToken: config.serverToken,
       instantChatEnabled: config.instantChatEnabled,
+      pushMode: config.pushMode,
+      thirdPartyPush: config.thirdPartyPush,
       // 一键部署生成的 Master Key 也要跟着存：这是本地唯一的一份，Worker 那边读不回来。
       masterKey: config.masterKey,
     });
@@ -530,6 +567,82 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       ...(prev || { userId: '', workerUrl: '' }),
       ...updates,
     }));
+  };
+
+  const handleSwitchPushMode = async (nextMode: 'web-push' | 'third-party') => {
+    if (!config) return;
+    const nextThirdParty = config.thirdPartyPush || { provider: 'wxpusher' as const, token: '' };
+    patchConfig({ pushMode: nextMode, thirdPartyPush: nextThirdParty });
+    await ActiveMsgStore.saveGlobalConfig({
+      instantChatEnabled: config.instantChatEnabled,
+      pushMode: nextMode,
+      thirdPartyPush: nextThirdParty,
+    });
+    if (nextMode === 'web-push' && config.initializedAt) {
+      void ActiveMsgClient.reconcilePushSubscription().catch(() => {});
+    }
+    await refreshPushStatus({ ...config, pushMode: nextMode, thirdPartyPush: nextThirdParty });
+  };
+
+  const handleSelectThirdPartyProvider = async (nextProvider: ThirdPartyPushProvider) => {
+    if (!config) return;
+    const prevTp = config.thirdPartyPush || { provider: 'wxpusher' as const, token: '' };
+    const nextThirdParty = {
+      ...prevTp,
+      provider: nextProvider,
+    };
+    patchConfig({ pushMode: 'third-party', thirdPartyPush: nextThirdParty });
+    await ActiveMsgStore.saveGlobalConfig({
+      instantChatEnabled: config.instantChatEnabled,
+      pushMode: 'third-party',
+      thirdPartyPush: nextThirdParty,
+    });
+    await refreshPushStatus({ ...config, pushMode: 'third-party', thirdPartyPush: nextThirdParty });
+  };
+
+  const handleSaveThirdPartyPush = async () => {
+    if (!config) return;
+    const tp = config.thirdPartyPush || { provider: 'wxpusher' as const, token: '' };
+    const validation = validateThirdPartyPushConfig(tp);
+    if (!validation.ok) {
+      addToast(validation.error || '请填写有效的第三方推送配置。', 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await ActiveMsgStore.saveGlobalConfig({
+        instantChatEnabled: config.instantChatEnabled,
+        pushMode: 'third-party',
+        thirdPartyPush: tp,
+      });
+      if (config.workerUrl?.trim()) {
+        await ActiveMsgClient.registerPushSubscription();
+        await refresh();
+        addToast('第三方推送通道已保存并登记到 Worker。', 'success');
+      } else {
+        await refreshPushStatus({ ...config, pushMode: 'third-party', thirdPartyPush: tp });
+        addToast('第三方推送配置已保存，连接 Worker 后会自动登记。', 'success');
+      }
+      trackEvent('开启通知与推送订阅', { result: 'ok' });
+    } catch (error: any) {
+      addToast(error?.message || '登记第三方推送失败。', 'error');
+      trackEvent('开启通知与推送订阅', { result: readAmsgFailKind(error) });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendTestPush = async () => {
+    setLoading(true);
+    try {
+      await ActiveMsgClient.sendTestPush();
+      addToast('测试通知已发出，请看手机通知栏是否收到！', 'success');
+    } catch (error: any) {
+      addToast(error?.message || '发送测试通知失败。', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCreateSubscription = async () => {
@@ -561,7 +674,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    * Token 只在这次操作期间留在内存里，成功与否都不落盘。需要长期留着的那一份已经作为
    * secret 写进用户自己的 Worker 了（以后「更新后端」用的就是它）。
    */
-  const handleOneClickDeploy = async (accountId?: string) => {
+  const handleOneClickDeploy = async (accountId?: string, resetExistingDatabase = false) => {
     const token = cfToken.trim();
     if (!token) {
       addToast('先把 Cloudflare API Token 填进来。', 'error');
@@ -571,6 +684,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     setProvisioning(true);
     setProvisionError('');
     setProvisionStep('');
+    setStaleDatabase(null);
     try {
       const vapid = loadPushVapid();
       const result = await provisionAmsgBackend({
@@ -584,6 +698,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           VAPID_EMAIL: vapid.vapidEmail || undefined,
           AMSG_SERVER_TOKEN: config?.serverToken || undefined,
         },
+        resetExistingDatabase,
         onProgress: (p: ProvisionProgress) => setProvisionStep(p.message),
       });
 
@@ -599,6 +714,12 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           setNeedsSubdomain(true);
           setProvisionError(result.message);
           trackEvent('一键部署 2.0 后端', { result: '要起子域名' });
+          return;
+        }
+        if (result.code === 'DATABASE_KEY_MISSING') {
+          setStaleDatabase({ accountId });
+          setProvisionError(result.message);
+          trackEvent('一键部署 2.0 后端', { result: '旧库缺密钥' });
           return;
         }
         setProvisionError(result.message);
@@ -620,6 +741,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         serverToken: secrets.AMSG_SERVER_TOKEN,
         masterKey: secrets.AMSG_MASTER_KEY,
         instantChatEnabled: config?.instantChatEnabled,
+        pushMode: config?.pushMode,
+        thirdPartyPush: config?.thirdPartyPush,
       });
       patchConfig({
         workerUrl: result.workerUrl,
@@ -672,6 +795,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         workerUrl: config.workerUrl,
         serverToken: config.serverToken,
         instantChatEnabled: config.instantChatEnabled,
+        pushMode: config.pushMode,
+        thirdPartyPush: config.thirdPartyPush,
       });
       const { warnings } = await ActiveMsgClient.connect();
       await refresh();
@@ -845,8 +970,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     }
   };
 
-  // 手动粘贴部署用。主流程是 fork sullyos-workers + 在 CF 连 Git，这条是给没有 GitHub
-  // 账号的人留的退路，所以在面板里收在折叠区里。
+  // 手动配置用：把打包好的 Worker 代码复制出来，贴进 CF 后台的 Edit code。
   const handleCopyWorkerBundle = async () => {
     try {
       await ActiveMsgClient.copyWorkerBundleToClipboard();
@@ -856,19 +980,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       addToast(`复制失败（${error?.message || error}）。也可以从仓库 worker/amsg/worker.bundle.js 获取。`, 'error');
       // 剪贴板 API 在非 HTTPS / 部分 WebView 里会直接抛，这条就是那批人的规模。
       trackEvent('复制 2.0 Worker 代码', { result: 'failed' });
-    }
-  };
-
-  // workers.dev 在国内连不上时的门面脚本。跟上面那份不一样：这份不打包、原样发布，
-  // 用户要照着里面的注释改 UPSTREAM 那一行，所以注释必须留着。
-  const handleCopyDenoProxy = async () => {
-    try {
-      await ActiveMsgClient.copyDenoProxyToClipboard();
-      addToast('代理代码已复制，贴进 Deno Playground 后记得改 UPSTREAM 那一行。', 'success');
-      trackEvent('复制 2.0 Deno 代理代码', { result: 'ok' });
-    } catch (error: any) {
-      addToast(`复制失败（${error?.message || error}）。也可以从仓库 worker/amsg/deno-proxy.ts 获取。`, 'error');
-      trackEvent('复制 2.0 Deno 代理代码', { result: 'failed' });
     }
   };
 
@@ -915,7 +1026,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    * 点完立刻生效（下一条消息就按新路走），而不是「点完还得等一下」。
    */
   const handleToggleInstantChat = async () => {
-    const next = !config?.instantChatEnabled;
+    const next = !(config && isInstantChatSwitchedOn(config));
     // 开了又关是这条路上最值钱的信号：能开、开过、然后放弃了，跟「压根没开」不是一回事。
     trackEvent('切换即时对话', { action: next ? '开' : '关' });
     patchConfig({ instantChatEnabled: next });
@@ -952,6 +1063,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   }
 
   const isConnected = Boolean(config.initializedAt);
+  const instantChatOn = isInstantChatSwitchedOn(config);
 
   // 体检：探测结果 + 「这台设备订阅了没」这个只有前端知道的事实，红绿灯判定全在
   // amsgDiagnostics 那份纯函数里（那边有回归测试钉着）。
@@ -959,6 +1071,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     ? buildAmsgDiagnosticRows({
       probe: diagnosticsProbe,
       localPushSubscribed: Boolean(pushStatus?.hasSubscription),
+      pushMode: config.pushMode,
       // 跟任务卡片同一种写法：cron 一分钟一跳，秒位没有意义。
       formatTime: (atMs) => formatTaskTime(atMs),
       tickReport: tickReportResult,
@@ -1184,97 +1297,62 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             <p className="text-[11px] leading-relaxed text-rose-600 whitespace-pre-line">{provisionError}</p>
           ) : null}
 
+          {staleDatabase ? (
+            <button
+              type="button"
+              disabled={provisioning || !cfToken.trim()}
+              onClick={() => {
+                if (!confirm('旧数据库里的数据会全部清掉（已排的主动消息、云端保存的角色状态和凭据），清了找不回来。\n\n确定清空并继续部署吗？')) return;
+                void handleOneClickDeploy(staleDatabase.accountId, true);
+              }}
+              className="w-full py-2.5 rounded-xl text-xs font-bold bg-white border border-rose-300 text-rose-600 active:scale-95 transition-transform disabled:opacity-50"
+            >
+              清空旧数据并继续部署
+            </button>
+          ) : null}
+
           <p className="text-[10px] leading-relaxed text-slate-400">
             浏览器不能直接调 Cloudflare 的接口（它不给跨域），所以这枚 Token 会经过本站的
             网络代理 Worker 转发一次。部署完它会作为密钥存进<strong>你自己的</strong> Worker，
-            以后「更新后端」用的就是它；本页不保存。介意的话可以照下面的手动方式装。
+            以后「更新后端」用的就是它；本页不保存。介意的话可以手动配置。
           </p>
-        </div>
-        )}
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+          {/* 手动配置只给明确选了这条路的人看：入口做成一行浅色小字，平时所有人都走上面的一键部署。 */}
           <button
             type="button"
-            onClick={() => setDeployOpen((prev) => {
-              // 只在展开时记一笔：收起也记的话同一个人会被数两次，漏斗第一格直接虚高一倍。
-              if (!prev) trackEvent('展开 2.0 部署指引', { mode: '主流程' });
+            onClick={() => setManualSetupOpen((prev) => {
+              // 只在展开时记一笔：收起也记的话同一个人会被数两次。
+              if (!prev) trackEvent('展开 2.0 部署指引', { mode: '手动配置' });
               return !prev;
             })}
-            className="w-full flex items-center justify-between text-left"
+            className="w-full flex items-center justify-between text-left text-[11px] font-bold text-slate-400"
           >
-            <span className="font-bold text-slate-700">手动部署 Worker（想自己一步步来）</span>
-            <span className="text-xs font-bold text-slate-400">{deployOpen ? '收起' : '展开'}</span>
+            <span>我要手动配置</span>
+            <span>{manualSetupOpen ? '收起' : '展开'}</span>
           </button>
 
-          {deployOpen ? (
-            <div className="space-y-3">
-              <p className="text-xs leading-relaxed text-slate-500">
-                全程在网页上点，不用装东西也不用敲命令，大约 15 分钟。第一次做建议直接照着
-                <strong>图文教程</strong>走，下面是简版。
+          {manualSetupOpen ? (
+            <div className="space-y-2.5">
+              <p className="text-[11px] leading-relaxed text-slate-500">
+                手动配置要自己在 Cloudflare 后台建数据库和 Worker、填密钥，步骤比较多，照着教程一步步来。
+                下面是教程里要用到的几样东西。
               </p>
-
-              <ol className="text-xs leading-relaxed text-slate-500 space-y-1.5 list-decimal list-outside pl-4">
-                <li>
-                  Fork 后端仓库 <code className="font-mono">sullyos-workers</code>
-                  （页面右上角 Fork → Create fork）。
-                </li>
-                <li>
-                  CF 后台 Storage &amp; databases → <strong>D1 SQLite Database</strong> 建一个库，
-                  把它的 <strong>Database ID</strong> 复制下来。表不用建，下面点「连接」时会自动建好。
-                </li>
-                <li>
-                  CF 后台 Workers &amp; Pages → <strong>Create application</strong> →
-                  <strong> Continue with GitHub</strong>，选中你 fork 的仓库，然后填：
-                  <ul className="mt-1 space-y-0.5 list-disc list-outside pl-4">
-                    <li>Build command：<code className="font-mono">sh ./deploy-prepare.sh</code></li>
-                    <li>Advanced settings → Path：<code className="font-mono">/amsg</code></li>
-                    <li>
-                      Advanced settings 里加一个构建变量
-                      <code className="font-mono"> D1_DATABASE_ID </code>
-                      = 上一步的 Database ID（<strong>别点 Encrypt</strong>，构建时要读它）
-                    </li>
-                  </ul>
-                </li>
-                <li>部署完在 Settings → Variables and secrets 按下面的清单填密钥，再 Deploy 一次。</li>
-              </ol>
-
-              <p className="text-[11px] leading-relaxed text-slate-400">
-                D1 绑定和「每分钟检查一次」的定时触发器都写在仓库里，会自动带上，不用手动加。
-                以后想更新，回你 fork 的仓库点一下 <strong>Sync fork</strong> 就行，CF 会自动重新部署。
-              </p>
-
-              <div className="grid grid-cols-3 gap-2">
-                {/* 三个出口合成一个事件带 target 枚举：它们是部署流程同一步的三条岔路，
-                    拆成三个事件名只是多占清单行数，看漏斗时还得自己加回去。 */}
-                <a
-                  href={WORKERS_REPO_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => trackEvent('打开 2.0 部署外链', { target: 'fork仓库' })}
-                  className="py-2.5 rounded-xl text-xs font-bold bg-violet-500 text-white text-center active:scale-95 transition-transform"
-                >
-                  ↗ Fork 仓库
-                </a>
-                <a
-                  href={SETUP_WALKTHROUGH_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => trackEvent('打开 2.0 部署外链', { target: '图文教程' })}
-                  className="py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 text-center active:scale-95 transition-transform"
-                >
-                  ↗ 图文教程
-                </a>
-                <a
-                  href={buildCloudflareDashboardUrl(config.workerUrl.trim() || undefined)}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => trackEvent('打开 2.0 部署外链', { target: 'CF面板' })}
-                  className="py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 text-center active:scale-95 transition-transform"
-                >
-                  ↗ CF 面板
-                </a>
-              </div>
-
+              <a
+                href={MANUAL_SETUP_TUTORIAL_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => trackEvent('打开 2.0 部署外链', { target: '手动配置教程' })}
+                className="block w-full py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 text-center active:scale-95 transition-transform"
+              >
+                ↗ 手动配置教程（Discord）
+              </a>
+              <button
+                type="button"
+                onClick={() => void handleCopyWorkerBundle()}
+                className="w-full py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 active:scale-95 transition-transform"
+              >
+                复制 Worker 代码
+              </button>
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5 text-xs">
                 <p className="font-bold text-slate-700">环境变量清单</p>
 
@@ -1327,56 +1405,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                   </p>
                 </div>
               </div>
-
-              <div className="border-t border-slate-100 pt-2.5">
-                <button
-                  type="button"
-                  onClick={() => setPasteFallbackOpen((prev) => {
-                    if (!prev) trackEvent('展开 2.0 部署指引', { mode: '手动粘贴' });
-                    return !prev;
-                  })}
-                  className="w-full flex items-center justify-between text-left text-[11px] font-bold text-slate-400"
-                >
-                  <span>没有 GitHub 账号？手动粘贴部署</span>
-                  <span>{pasteFallbackOpen ? '收起' : '展开'}</span>
-                </button>
-
-                {pasteFallbackOpen ? (
-                  <div className="mt-2 space-y-2">
-                    <ol className="text-[11px] leading-relaxed text-slate-500 space-y-1.5 list-decimal list-outside pl-4">
-                      <li>
-                        点下面「复制 Worker 代码」，CF 后台 Create → Worker 建一个空 Worker，
-                        进 <strong>Edit code</strong> 全选粘贴覆盖，Deploy。
-                      </li>
-                      <li>
-                        Settings → Bindings 加一个 <strong>D1 database</strong>，
-                        变量名必须是 <code className="font-mono">DB</code>。
-                      </li>
-                      <li>
-                        Settings → Trigger Events 加 <strong>Cron Trigger</strong>：
-                        <code className="font-mono"> * * * * * </code>（每分钟检查一次到点任务）。
-                      </li>
-                      <li>Settings → Variables and secrets 按上面的清单填密钥，然后重新 Deploy 一次。</li>
-                    </ol>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyWorkerBundle()}
-                      className="w-full py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 active:scale-95 transition-transform"
-                    >
-                      复制 Worker 代码
-                    </button>
-
-                    <p className="text-[11px] leading-relaxed text-slate-400">
-                      这条路每次 Worker 更新都要重新粘一遍，D1 绑定和定时触发器也得自己加，容易漏。
-                      能用 GitHub 的话还是走上面的 fork 流程。
-                    </p>
-                  </div>
-                ) : null}
-              </div>
             </div>
           ) : null}
         </div>
+        )}
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
@@ -1389,9 +1421,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           {workerOutdated ? (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs leading-relaxed text-amber-700">
               Worker 上跑的还是旧版代码，缺少新特性（大上下文云端存储、服务端工具循环等）。
-              回你 fork 的 <code className="font-mono">sullyos-workers</code> 仓库点一下
-              <strong> Sync fork</strong>，CF 会自动重新部署（当初是手动粘贴部署的话，
-              去下方「部署 Worker」里重新复制一次代码粘贴覆盖）。已有数据和任务不受影响。
+              点下方的<strong>「更新 Worker」</strong>就能换上新版，已有数据和任务不受影响。
             </div>
           ) : null}
 
@@ -1406,71 +1436,16 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
               placeholder="https://amsg.你的账号.workers.dev"
               className="w-full bg-white/70 border border-slate-200 rounded-2xl px-4 py-3 text-xs font-mono"
             />
-
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={() => setDenoProxyOpen((prev) => {
-                  if (!prev) trackEvent('展开 2.0 部署指引', { mode: 'Deno 代理' });
-                  return !prev;
-                })}
-                className="w-full flex items-center justify-between text-left text-[11px] font-bold text-slate-400"
-              >
-                <span>这个地址连不上？在外面套一层 Deno</span>
-                <span>{denoProxyOpen ? '收起' : '展开'}</span>
-              </button>
-
-              {denoProxyOpen ? (
-                <div className="mt-2 space-y-2">
-                  <p className="text-[11px] leading-relaxed text-slate-500">
-                    <code className="font-mono">workers.dev</code> 这个域名在国内连不上。
-                    办法是给它套一个门面：Worker 和数据全都留在 Cloudflare 不动，
-                    只在外面加一层只管转发的 Deno，然后把地址换成 Deno 那个。
-                  </p>
-
-                  <ol className="text-[11px] leading-relaxed text-slate-500 space-y-1.5 list-decimal list-outside pl-4">
-                    <li>
-                      去 Deno 控制台点右上角 <strong>New Playground</strong>。
-                    </li>
-                    <li>
-                      点下面「复制 Deno 代理代码」，在 Playground 里全选粘贴覆盖，
-                      把开头 <code className="font-mono">UPSTREAM</code> 那一行改成你上面填的
-                      Cloudflare 地址，然后 Deploy。
-                    </li>
-                    <li>
-                      把 Deploy 后拿到的 <code className="font-mono">https://xxx.deno.net</code> 地址
-                      填回上面的输入框，替换掉原来那个。
-                    </li>
-                  </ol>
-
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyDenoProxy()}
-                      className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 active:scale-95 transition-transform"
-                    >
-                      复制 Deno 代理代码
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        trackEvent('打开 Deno 控制台');
-                        window.open('https://console.deno.com', '_blank');
-                      }}
-                      className="shrink-0 px-3 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 active:scale-95 transition-transform"
-                    >
-                      去 Deno
-                    </button>
-                  </div>
-
-                  <p className="text-[11px] leading-relaxed text-slate-400">
-                    收消息不走这一层——推送是 Cloudflare 直接发给手机的，
-                    所以这层就算挂了也只影响你打开这个面板改配置。
-                    部署好后打开 <code className="font-mono">/__proxy-health</code> 能看它活着没。
-                  </p>
-                </div>
-              ) : null}
-            </div>
+            <a
+              href={DIRECT_CONNECT_TUTORIAL_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => trackEvent('打开 2.0 部署外链', { target: '直连教程' })}
+              className="mt-2 flex items-center justify-between text-[11px] font-bold text-slate-400"
+            >
+              <span>这个地址连不上？看直连教程</span>
+              <span>↗</span>
+            </a>
           </div>
 
           <div>
@@ -1545,6 +1520,12 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                   你这台 Worker 上跑的是
                   {workerVersion.deployed ? <code className="font-mono"> {workerVersion.deployed} </code> : '更早的版本'}
                   ，更新后即时对话才走得上新的生成通道。
+                </p>
+              ) : workerVersion?.state === 'ahead' ? (
+                <p className="text-xs leading-relaxed text-emerald-700">
+                  后端已经是更新的
+                  <code className="font-mono"> {workerVersion.deployed} </code>
+                  ，这个页面还是旧版（<code className="font-mono">{workerVersion.expected}</code>），刷新页面就能用上新版 App。
                 </p>
               ) : workerVersion?.state === 'current' ? (
                 <p className="text-xs leading-relaxed text-slate-500">
@@ -1676,54 +1657,231 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <span className="font-bold text-slate-700">
-              {pushStatus?.transport === 'unified-push' ? 'UnifiedPush 通知' : '通知权限'}
+              {config.pushMode === 'third-party'
+                ? '第三方推送 App'
+                : pushStatus?.transport === 'unified-push'
+                  ? 'UnifiedPush 通知'
+                  : '通知与推送通道'}
             </span>
             <span className={`text-xs font-bold ${pushStatus?.hasSubscription ? 'text-emerald-600' : 'text-amber-600'}`}>
               {checkingPush ? '检查中…' : pushCheckError ? '暂时无法检查' : pushStatus?.hasSubscription ? '已开启' : '未开启'}
             </span>
           </div>
-          <p className="text-xs leading-relaxed text-slate-500">
-            这是第二步。只有你真的想让角色在后台主动推送消息时，才需要点。
-          </p>
-          {pushStatus?.transport === 'unified-push' ? (
-            <p className="text-xs leading-relaxed text-slate-500">
-              Android App 通过开放的 UnifiedPush 收消息，不依赖 Firebase 或 Google 服务。
-              ntfy 只负责在后台唤醒本 App，AMSG Worker 仍是你自己部署的那一台。
-            </p>
-          ) : (
-            <p className="text-xs leading-relaxed text-slate-500">
-              推送跟着「排程时所在的设备」走：每条任务到点后，推给保存这条排程时用的那台设备。
-              换了设备（或者换了浏览器）之后，在新设备上把排程重新保存一次，之后的推送就发到这台。
-            </p>
-          )}
-          {pushStatus?.needsDistributor ? (
-            <a
-              href="https://docs.ntfy.sh/subscribe/phone/"
-              target="_blank"
-              rel="noreferrer"
-              className="block text-xs font-bold text-violet-600 underline"
+
+          <div className="grid grid-cols-2 gap-1.5 bg-slate-200/70 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => void handleSwitchPushMode('web-push')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-colors ${
+                config.pushMode !== 'third-party'
+                  ? 'bg-white text-slate-800 shadow-sm'
+                  : 'text-slate-500'
+              }`}
             >
-              安装并打开 ntfy（选择无 Firebase 版本）
-            </a>
-          ) : null}
-          {pushStatus?.detail ? (
-            <p className="text-xs leading-relaxed text-amber-600">{pushStatus.detail}</p>
-          ) : null}
-          {pushCheckError ? (
-            <div role="alert" className="space-y-2 text-xs text-amber-600">
-              <p>{pushCheckError}</p>
-              <button type="button" onClick={() => void refreshPushStatus(config)} className="font-bold underline">
-                重试推送检查
-              </button>
-            </div>
-          ) : null}
-          <button
-            onClick={handleCreateSubscription}
-            disabled={loading}
-            className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
-          >
-            {loading ? '处理中...' : pushStatus?.transport === 'unified-push' ? '连接 ntfy 并开启通知' : '开启通知与推送'}
-          </button>
+              {pushStatus?.transport === 'unified-push' ? '系统 / ntfy 推送' : '网页 / 系统原生推送'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSwitchPushMode('third-party')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-colors ${
+                config.pushMode === 'third-party'
+                  ? 'bg-white text-violet-700 shadow-sm'
+                  : 'text-slate-500'
+              }`}
+            >
+              第三方推送 App
+            </button>
+          </div>
+
+          {config.pushMode === 'third-party' ? (
+            (() => {
+              const tp = config.thirdPartyPush || { provider: 'wxpusher' as const, token: '' };
+              const providerMeta = getThirdPartyPushProviderMeta(tp.provider);
+              const liveValidation = validateThirdPartyPushConfig(tp);
+              const savedAndMatched = Boolean(
+                liveValidation.ok
+                && pushStatus?.hasSubscription
+                && pushStatus?.thirdPartyProvider === providerMeta.id,
+              );
+              const liveDetail = !liveValidation.ok
+                ? liveValidation.error
+                : !config.workerUrl?.trim()
+                  ? '请先填写 Worker 地址。'
+                  : savedAndMatched
+                    ? `第三方推送：${providerMeta.shortLabel}`
+                    : `已填写 ${providerMeta.shortLabel} 配置，请点击下方「保存并登记推送」生效。`;
+              return (
+                <div className="space-y-3">
+                  <p className="text-xs leading-relaxed text-slate-500">
+                    通过手机上的第三方推送 App 转发系统级通知，可绕过老版本 iOS 不支持网页推送（Web Push）的限制，
+                    也不受 Google 推送服务器在国内网络波动的影响。打开 SullyOS 时会自动从云端收件箱拉取完整角色消息。
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block pl-1">
+                      选择推送平台
+                    </label>
+                    <div className="space-y-1.5">
+                      {THIRD_PARTY_PUSH_PROVIDERS.map((item) => {
+                        const selected = providerMeta.id === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => void handleSelectThirdPartyProvider(item.id as ThirdPartyPushProvider)}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl border transition-colors flex items-center justify-between gap-2 ${
+                              selected
+                                ? 'bg-violet-50 border-violet-300 text-violet-900'
+                                : 'bg-white border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <span className="text-xs font-bold">{item.label}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                              selected ? 'bg-violet-200/70 text-violet-800' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {item.badge}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] leading-relaxed text-slate-500 bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+                    {providerMeta.helpText}
+                  </p>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">
+                      {providerMeta.tokenLabel}
+                    </label>
+                    <input
+                      type="text"
+                      value={tp.token || ''}
+                      onChange={(e) => patchConfig({
+                        pushMode: 'third-party',
+                        thirdPartyPush: {
+                          ...tp,
+                          provider: providerMeta.id,
+                          token: e.target.value,
+                        },
+                      })}
+                      placeholder={providerMeta.tokenPlaceholder}
+                      autoComplete="off"
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono"
+                    />
+                  </div>
+
+                  {providerMeta.supportsCustomServer ? (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">
+                        自定义服务器地址（可选，留空用官方服务器）
+                      </label>
+                      <input
+                        type="text"
+                        value={tp.serverUrl || ''}
+                        onChange={(e) => patchConfig({
+                          pushMode: 'third-party',
+                          thirdPartyPush: {
+                            ...tp,
+                            provider: providerMeta.id,
+                            serverUrl: e.target.value,
+                          },
+                        })}
+                        placeholder={providerMeta.defaultServerOrigin || 'https://'}
+                        autoComplete="off"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono"
+                      />
+                    </div>
+                  ) : null}
+
+                  {liveDetail ? (
+                    <p className={`text-xs leading-relaxed ${savedAndMatched ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {liveDetail}
+                    </p>
+                  ) : null}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveThirdPartyPush()}
+                      disabled={loading}
+                      className="flex-1 py-3 bg-violet-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50 text-xs"
+                    >
+                      {loading ? '处理中...' : '保存并登记推送'}
+                    </button>
+                    {isConnected && pushStatus?.hasSubscription ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleSendTestPush()}
+                        disabled={loading}
+                        className="shrink-0 px-3.5 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50 text-xs"
+                      >
+                        发送测试通知
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            <>
+              <p className="text-xs leading-relaxed text-slate-500">
+                这是第二步。只有你真的想让角色在后台主动推送消息时，才需要点。
+              </p>
+              {pushStatus?.transport === 'unified-push' ? (
+                <p className="text-xs leading-relaxed text-slate-500">
+                  Android App 通过开放的 UnifiedPush 收消息，不依赖 Firebase 或 Google 服务。
+                  ntfy 只负责在后台唤醒本 App，AMSG Worker 仍是你自己部署的那一台。你也可以切换到上方的「第三方推送 App」使用 WxPusher（推荐）。
+                </p>
+              ) : (
+                <p className="text-xs leading-relaxed text-slate-500">
+                  推送跟着「排程时所在的设备」走：每条任务到点后，推给保存这条排程时用的那台设备。
+                  换了设备（或者换了浏览器）之后，在新设备上把排程重新保存一次，之后的推送就发到这台。若你的 iOS 版本不支持网页推送，或受网络影响收不到通知，可切换到上方的「第三方推送 App」。
+                </p>
+              )}
+              {pushStatus?.needsDistributor ? (
+                <a
+                  href="https://docs.ntfy.sh/subscribe/phone/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-xs font-bold text-violet-600 underline"
+                >
+                  安装并打开 ntfy（选择无 Firebase 版本）
+                </a>
+              ) : null}
+              {pushStatus?.detail ? (
+                <p className="text-xs leading-relaxed text-amber-600">{pushStatus.detail}</p>
+              ) : null}
+              {pushCheckError ? (
+                <div role="alert" className="space-y-2 text-xs text-amber-600">
+                  <p>{pushCheckError}</p>
+                  <button type="button" onClick={() => void refreshPushStatus(config)} className="font-bold underline">
+                    重试推送检查
+                  </button>
+                </div>
+              ) : null}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCreateSubscription}
+                  disabled={loading}
+                  className="flex-1 py-3 bg-violet-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
+                >
+                  {loading ? '处理中...' : pushStatus?.transport === 'unified-push' ? '连接 ntfy 并开启通知' : '开启通知与推送'}
+                </button>
+                {isConnected && pushStatus?.hasSubscription ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSendTestPush()}
+                    disabled={loading}
+                    className="shrink-0 px-3.5 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50 text-xs"
+                  >
+                    发送测试通知
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
         </div>
 
         {/* 即时对话：聊天本身也交给云端跑。四道门缺一不可，缺哪道就把哪道写出来——
@@ -1734,10 +1892,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             {/* 开着但有门没过时不能只写「已开启」——那几道门是真的会让这一轮走本地生成的，
                 标成绿色的「已开启」就是在骗人：用户以为聊天在云端跑，实际一直在本地。 */}
             <span className={`text-xs font-bold ${
-              !config.instantChatEnabled ? 'text-slate-400'
+              !instantChatOn ? 'text-slate-400'
                 : instantChatBlockedReason ? 'text-amber-600' : 'text-emerald-600'
             }`}>
-              {!config.instantChatEnabled ? '未开启'
+              {!instantChatOn ? '未开启'
                 : instantChatBlockedReason ? '已开启 · 暂不生效' : '已开启'}
             </span>
           </div>
@@ -1756,12 +1914,12 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           <button
             type="button"
             onClick={() => void handleToggleInstantChat()}
-            disabled={loading || (!config.instantChatEnabled && !!instantChatBlockedReason)}
+            disabled={loading || (!instantChatOn && !!instantChatBlockedReason)}
             className={`w-full py-3 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-40 ${
-              config.instantChatEnabled ? 'bg-slate-200 text-slate-600' : 'bg-slate-900 text-white'
+              instantChatOn ? 'bg-slate-200 text-slate-600' : 'bg-slate-900 text-white'
             }`}
           >
-            {config.instantChatEnabled ? '关闭即时对话' : '开启即时对话'}
+            {instantChatOn ? '关闭即时对话' : '开启即时对话'}
           </button>
         </div>
 
@@ -1791,7 +1949,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                 </div>
               </div>
               <p className="text-[11px] leading-relaxed text-slate-500">
-                Worker 侧的环境变量清单见上面「部署 Worker」一节。发布的 Worker 代码默认 CORS 全开
+                发布的 Worker 代码默认 CORS 全开
                 （<code className="font-mono">origin: '*'</code>），想收紧就把它改成自己站点的域名再部署。
               </p>
               {onOpenCloudData ? (

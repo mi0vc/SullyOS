@@ -12,6 +12,7 @@
 
 | 主题 | 文档 | 什么时候看 |
 |------|------|-----------|
+| **用户空间 / 角色继承 / 共享素材** | [`docs/user-spaces.md`](./docs/user-spaces.md) | 改用户切换、角色专属用户资料、跨空间继承、备份范围或素材删除前必读；会话固定所属空间、配置独立文件共用、继承不带经历、定位隐私不备份 |
 | **悬浮球与全局返回** | [`docs/navigation.md`](./docs/navigation.md) | 改快捷导航开关、拖动安全区、浏览器／Android 返回、美化子页退出前必读 |
 | **iOS 27 主屏幕顶部白雾 / 状态栏底色** | [`docs/ios-status-bar-edge.md`](./docs/ios-status-bar-edge.md) | 改顶部取色、viewport 或 iOS 门禁前必读；manifest standalone 使用 contain，零安全区不回退 44px，异步高度收缩要重建基线；纯色接合不等于壁纸贯穿 |
 | **3D 小屋 · 布局与功能分区** | [`docs/room3d-layout.md`](./docs/room3d-layout.md) | 设计或重排任何房间/样板房、自动摆家具前必读；先划功能区，再按家具组合摆放，保留连续动线，不能逐件随机找空位；本轮统一黑 × 绿 × 白 |
@@ -27,6 +28,7 @@
 | **彼方 · 活动选择与自动范围** | [`docs/kanata-activities.md`](./docs/kanata-activities.md) | 改房间/SAR 随机选取、手动子玩法路由或高级排除设置前必读；自动全禁用不得回退，手动可绕过 |
 | **记忆系统** | [`docs/memory-system-overview.md`](./docs/memory-system-overview.md) | 涉及长期记忆、月度总结、向量化记忆宫殿、情感空间。改记忆相关逻辑前必读 |
 | **查手机 · 人际关系系统** | [`docs/relationship-system.md`](./docs/relationship-system.md) | 改「查手机」聊天/通讯录、角色联系人/好感、真假甄别、真角色双向对话、虚构 NPC 约束前必读 |
+| **好友圈 · 独立 App 与家园手机** | [`docs/friend-feed.md`](./docs/friend-feed.md)、[`docs/friend-feed-weibo.md`](./docs/friend-feed-weibo.md) | 改好友圈入口、生活圈、动态评论、微博或备份前必读；双入口共用数据，角色按 ID 分圈；绑定微博按 RP 身份混排，同步不写记忆；通知提供文本操作格式，微博复用设置代理 |
 | **查手机 · 人格模拟与生活记录** | [`docs/persona-sim.md`](./docs/persona-sim.md) | 改「用 TA 的手机活一次」生成、保存、断点续播或完成效果前必读；生成即归档，通知不是唯一剧本，首次到结尾才加情绪效果 |
 | **见面 · 观测协议 OBSERVE** | [`docs/date-observe.md`](./docs/date-observe.md) | 改见面（DateApp）的角色观测面板：提示词注入、掉格式解析容错（两层）、全息 HUD 渲染前必读 |
 | **银行 / 生活记录 · 收支记账** | [`docs/bank-ledger.md`](./docs/bank-ledger.md) | 改收入、支出、角色代记、预算或 CSV 导出前必读；旧流水默认支出，收入不扣支出预算，全部导出跨月跨年 |
@@ -40,6 +42,8 @@
 | **云端数据管理 / 角色删除** | [`plans/amsg2-cloud-data-management-contract.md`](./plans/amsg2-cloud-data-management-contract.md) | 改云端清单、按项清理、删除角色、停用与恢复前必读；清单以服务端实际资源为准，删除由云端持久操作执行，旧请求不可随恢复获得新代次 |
 | **主动消息 2.0 · 即时对话** | [`plans/amsg2-instant-chat.md`](./plans/amsg2-instant-chat.md)（设计与取舍）、[`plans/amsg2-instant-chat-contract.md`](./plans/amsg2-instant-chat-contract.md)(端点/信封/fire_pack v7 契约) | 改「聊天在用户自己的 CF Worker 上生成」这条路（`POST /instant-chat`、`utils/amsgInstantChat.ts`、fire_pack 的 `chat` 段、chat_outbox 补收、「正在输入」超时）前必读 |
 | **主动消息 2.0 · 后台任务（不说话的活儿）** | [`plans/amsg2-expansion.md`](./plans/amsg2-expansion.md) | 改「页面关着也能跑完」的后台活儿前必读：`metadata.amsgKind` → handler 注册表（`worker/amsg/src/fireKinds.ts`）、一次性输入的 `amsg:job` 命名空间与 TTL、`ctx.emitResult` 的结果回程与客户端分发（`utils/amsgResults.ts`）。文首「现状」是实况，正文是「还有哪些调用点值得搬、哪些不该搬」的取舍 |
+| **见面挂起与离开提醒** | [`docs/date-leave-reminder.md`](./docs/date-leave-reminder.md) | 改见面挂起恢复、「见面中」顶部条、离开提醒或它的云端任务前必读；主动结束不挂起，提醒进入对话时就备好、按见面租约推迟，不受连发和每日上限拦且不给排程工具 |
+| **离开后消息** | [`docs/away-message.md`](./docs/away-message.md) | 改「用户多久没说话角色就来找」前必读；开着 2.0 的角色走云端推送、其余本地上线时补，不叠加；云端到点必发且计入连发上限，一次离开只找一次 |
 | **主动消息 · 频率与额度** | [`docs/amsg2-pacing-limits.md`](./docs/amsg2-pacing-limits.md) | 改角色能自己排什么、连发/间隔/每日上限、重复消息没回就停、任务名额，或者改给角色看的「用户给你定的规矩」前必读；上限是代码硬闸，默认值只在 `utils/amsgLimits.ts` 定义一次 |
 | **主动消息 2.0 · API 凭据引用 credRefs** | [`plans/amsg2-llm-credentials-contract.md`](./plans/amsg2-llm-credentials-contract.md) | 改凭据上云（`llm_credentials` 表、任务 `credRefs`、`utils/amsgLlmCredentials.ts` 的每角色三行）或排查「换 Key 后主动消息 401 / 不来了」前必读；文末「SullyOS 侧落地」是实况 |
 | **使用统计** | [`docs/analytics.md`](./docs/analytics.md) | **加任何埋点前必读**。收什么/不收什么的边界、事件名与属性的规矩（属性只能是固定枚举）、构建时门禁与开关、完整事件清单。想加「某功能有多少人开了」看「加新埋点的规矩」第 5 条，别在配置页现场发 |
