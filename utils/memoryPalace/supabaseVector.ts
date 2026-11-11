@@ -556,24 +556,26 @@ export async function syncLocalToRemote(
     config: RemoteVectorConfig,
     getLocalVectors: () => Promise<{ memoryId: string; charId: string; vector: number[] | Float32Array | Uint8Array; node: MemoryNode; dimensions: number; model?: string }[]>,
     onProgress?: (done: number, total: number) => void,
-): Promise<{ synced: number; failed: number; conflicts: number; conflictIds: string[]; failedIds: string[] }> {
+): Promise<{ synced: number; failed: number; conflicts: number; conflictIds: string[]; failedIds: string[]; errors: string[] }> {
     const locals = await getLocalVectors();
-    if (locals.length === 0) return { synced: 0, failed: 0, conflicts: 0, conflictIds: [], failedIds: [] };
+    if (locals.length === 0) return { synced: 0, failed: 0, conflicts: 0, conflictIds: [], failedIds: [], errors: [] };
     let synced = 0, failed = 0, conflicts = 0;
     const conflictIds: string[] = [];
     const failedIds: string[] = [];
+    const errors: string[] = [];
     if (isCompat(config)) {
       for (let i=0;i<locals.length;i++) {
         const item=locals[i];
         try {
           const ok=await upsertVector(config,item.memoryId,item.charId,item.vector,item.node,item.dimensions,item.model);
-          if(ok) synced++; else { failed++; failedIds.push(item.memoryId); }
+          if(ok) synced++; else { failed++; failedIds.push(item.memoryId); errors.push(item.memoryId+': 云端未确认写入成功'); }
         } catch (e:any) {
+          errors.push(item.memoryId+': '+(e?.message || String(e)));
           if(e?.conflict){ conflicts++; conflictIds.push(item.memoryId); } else { failed++; failedIds.push(item.memoryId); }
         }
         onProgress?.(i+1,locals.length);
       }
-      return {synced,failed,conflicts,conflictIds,failedIds};
+      return {synced,failed,conflicts,conflictIds,failedIds,errors};
     }
     const BATCH = 50;
     for (let i = 0; i < locals.length; i += BATCH) {
@@ -582,5 +584,5 @@ export async function syncLocalToRemote(
         if (ok) synced += batch.length; else { failed += batch.length; failedIds.push(...batch.map(item => item.memoryId)); }
         onProgress?.(Math.min(i + BATCH, locals.length), locals.length);
     }
-    return { synced, failed, conflicts, conflictIds, failedIds };
+    return { synced, failed, conflicts, conflictIds, failedIds, errors };
 }

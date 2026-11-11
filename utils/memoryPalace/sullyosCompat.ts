@@ -51,6 +51,7 @@ export async function listCompatPersonaPartitions(c:RemoteVectorConfig):Promise<
     if(rows.length<1000) break;
   }
   const labels=await listCompatPersonaLabels(c).catch(()=>({} as Record<string,string>));
+  for(const id of Object.keys(labels)) if(!result.has(id)) result.set(id,0);
   return [...result].map(([personaId,count])=>({personaId,count,displayName:labels[personaId]}));
 }
 export function compatPersona(charId:string|undefined,c:RemoteVectorConfig):string {const b=bindings(c);if(charId&&b[charId])return b[charId];throw new Error('共享库操作需要当前角色的明确绑定');}

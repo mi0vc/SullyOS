@@ -927,6 +927,7 @@ export default function MemoryPalaceApp() {
     useEffect(()=>{setRvTestResult('');},[rvUrl,rvKey,rvPersona,rvCompat,activeCharacterId]);
     const [rvTesting, setRvTesting] = useState(false);
     const [rvSyncing, setRvSyncing] = useState(false);
+    const [rvSyncReport, setRvSyncReport] = useState('');
     const [rvSyncProgress, setRvSyncProgress] = useState<{ done: number; total: number } | null>(null);
     const [rvPartitions,setRvPartitions]=useState<{personaId:string;count:number;displayName?:string}[]>([]);
     const [rvLabelDraft,setRvLabelDraft]=useState('');
@@ -1776,6 +1777,21 @@ export default function MemoryPalaceApp() {
         }
     };
 
+    const handleCreateCloudPersona = async () => {
+        try {
+            if (!activeCharacterId) throw new Error('请先选择本地角色');
+            const c = {...remoteVectorConfig, supabaseUrl:rvUrl.trim(), supabaseAnonKey:rvKey.trim(), compatShared:true};
+            if (rvEmail && rvPassword) { await compatLogin(c,rvEmail.trim(),rvPassword); setRvPassword(''); }
+            if (readCompatBinding(activeCharacterId,c)) throw new Error('当前角色已有绑定，请勿重复创建分区');
+            const persona=crypto.randomUUID();
+            const name=characters.find(x=>x.id===activeCharacterId)?.name || '未命名角色';
+            await saveCompatPersonaLabel(c,persona,name);
+            bindCompat(activeCharacterId,persona,c);
+            setRvPersona(persona); setRvLabelDraft(name);
+            setRvPartitions(await listCompatPersonaPartitions(c));
+            addToast('独立分区已创建并绑定；请测试连接、保存配置后上传当前角色','success');
+        } catch(e:any) { setRvSyncReport('创建分区失败：'+e.message); }
+    };
     // 远程向量：测试连接
     const handleTestRemoteVector = async () => {
         setRvTesting(true);
@@ -1784,7 +1800,7 @@ export default function MemoryPalaceApp() {
             const { testConnection } = await import('../utils/memoryPalace/supabaseVector');
             if(rvCompat){if(!activeCharacterId)throw new Error('请先选择角色'); if(rvEmail&&rvPassword){await compatLogin({enabled:true,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,initialized:false},rvEmail,rvPassword);setRvPassword('');}bindCompat(activeCharacterId,rvPersona,{...remoteVectorConfig,supabaseUrl:rvUrl,supabaseAnonKey:rvKey});}
             const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false, compatShared:rvCompat });
-            if(rvCompat && result.ok && result.tableExists) { const { compatHeaders } = await import('../utils/memoryPalace/sullyosCompat'); const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true}; const res=await fetch(new URL('/rest/v1/memory_vectors',rvUrl).href+'?select=memory_id&char_id=eq.'+encodeURIComponent(rvPersona)+'&limit=1',{headers:{apikey:rvKey,...await compatHeaders(c)}}); if(!res.ok)throw new Error('角色验证失败'); const rows=await res.json(); if(!rows.length)throw new Error('当前账号下未找到此云端角色的记忆，请核对角色编号'); }
+            if(rvCompat && result.ok && result.tableExists) { const { compatHeaders } = await import('../utils/memoryPalace/sullyosCompat'); const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true}; const res=await fetch(new URL('/rest/v1/memory_vectors',rvUrl).href+'?select=memory_id&char_id=eq.'+encodeURIComponent(rvPersona)+'&limit=1',{headers:{apikey:rvKey,...await compatHeaders(c)}}); if(!res.ok)throw new Error('角色验证失败'); const rows=await res.json(); if(!rows.length){const {listCompatPersonaLabels}=await import('../utils/memoryPalace/sullyosCompat'); const labels=await listCompatPersonaLabels(c);if(!labels[rvPersona])throw new Error('此分区尚未注册，请先创建独立分区或选择已有分区');} }
             if (result.ok && result.tableExists) setRvTestResult('[ok]' + result.message);
             else if (result.ok) setRvTestResult('[warn]' + result.message);
             else setRvTestResult('[err]' + result.message);
@@ -1858,11 +1874,13 @@ export default function MemoryPalaceApp() {
         if (!activeCharacterId) { addToast('请先选择要同步的角色', 'error'); return; }
         setRvSyncing(true);
         setRvSyncProgress({ done: 0, total: 0 });
+        setRvSyncReport('正在读取当前角色的本地向量…');
         trackEvent('同步记忆向量到云端');
         try {
             const { syncLocalToRemote } = await import('../utils/memoryPalace/supabaseVector');
             const { MemoryNodeDB, MemoryVectorDB } = await import('../utils/memoryPalace/db');
             const selectedCharId = activeCharacterId;
+            if(remoteVectorConfig.compatShared && !readCompatBinding(selectedCharId,remoteVectorConfig)) throw new Error('当前角色尚未绑定云端分区，请先点击为当前角色创建独立云端分区');
             const result = await syncLocalToRemote(
                 remoteVectorConfig,
                 async () => {
@@ -1876,10 +1894,12 @@ export default function MemoryPalaceApp() {
                 },
                 (done, total) => setRvSyncProgress({ done, total }),
             );
+            setRvSyncReport(`角色：${characters.find(x=>x.id===selectedCharId)?.name || selectedCharId}\n成功 ${result.synced}，冲突 ${result.conflicts}，失败 ${result.failed}\n${result.errors.join('\n')}${result.synced+result.failed+result.conflicts===0?'本地没有可上传的向量；尚未上传任何记录。':''}`);
+            if(remoteVectorConfig.compatShared) { try {setRvPartitions(await listCompatPersonaPartitions(remoteVectorConfig));}catch(e:any){setRvSyncReport(r=>r+'\n上传后读取分区失败：'+e.message);} }
             const failedSample = result.failedIds.slice(0, 5).join('、');
             const suffix = failedSample ? `；失败编号：${failedSample}${result.failedIds.length > 5 ? ' 等' : ''}` : '';
             addToast(`当前角色同步完成: ${result.synced} 条成功, ${result.conflicts} 条冲突, ${result.failed} 条失败${suffix}`, (result.failed || result.conflicts) > 0 ? 'error' : 'success');
-        } catch (e: any) { addToast(`同步失败: ${e.message}`, 'error'); }
+        } catch (e: any) { setRvSyncReport('同步失败：'+e.message); addToast(`同步失败: ${e.message}`, 'error'); }
         setRvSyncing(false);
         setRvSyncProgress(null);
     };
@@ -3918,6 +3938,8 @@ create table if not exists memory_vectors (
                     </div>
 
                     </>}
+                    {rvSyncReport && <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',fontSize:12}}>{rvSyncReport}</pre>}
+                    {rvCompat && <button type="button" className={inputClass} disabled={rvSyncing || !activeCharacterId} onClick={handleCreateCloudPersona}>为当前角色创建独立云端分区</button>}
                     <div><label><input type="checkbox" checked={rvCompat} onChange={e=>setRvCompat(e.target.checked)}/>使用已有共享库兼容格式（无需初始化 SQL）</label>{rvCompat&&<div><p>向量模型必须为 BAAI/bge-m3，1024 维。</p><input className={inputClass} placeholder="云端角色分区编号（char_id）" value={rvPersona} onChange={e=>setRvPersona(e.target.value)}/><button className={inputClass} type="button" onClick={async()=>{try{const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true};const ps=await listCompatPersonaPartitions(c);setRvPartitions(ps);addToast(`读取到 ${ps.length} 个实际角色分区`, 'info');}catch(e:any){addToast(`读取角色分区失败：${e.message}`,'error');}}}>读取云端实际角色分区</button>{rvPartitions.length>0&&<div style={{fontSize:10,color:'#64748b'}}>{rvPartitions.map(p=><button type="button" key={p.personaId} onClick={()=>{setRvPersona(p.personaId);setRvLabelDraft(p.displayName||'');}} style={{display:'block',border:0,background:'transparent',padding:'3px 0',cursor:'pointer',textAlign:'left'}}>{p.displayName?`${p.displayName}（${p.count}条记忆） · ${p.personaId.slice(0,8)}`:`${p.personaId}（${p.count}条记忆）`}</button>)}
                             <div style={{display:'flex',gap:4,marginTop:6}}>
                               <input className={inputClass} placeholder="给这个分区起个名字，比如：夏里" value={rvLabelDraft} onChange={e=>setRvLabelDraft(e.target.value)}/>
@@ -3988,7 +4010,7 @@ create table if not exists memory_vectors (
                             {rvSyncing ? `同步中 ${rvSyncProgress?.done ?? 0}/${rvSyncProgress?.total ?? 0}` : (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                                     <Icon name="refresh" size={13} />
-                                    <span>同步本地向量到远程</span>
+                                    <span>仅上传当前角色：{characters.find(x=>x.id===activeCharacterId)?.name || '请先选择角色'}</span>
                                 </span>
                             )}
                         </button>
