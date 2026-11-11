@@ -9,7 +9,34 @@ function bindingKey(c:RemoteVectorConfig){return PREFIX+base(c)+'.'+load(c).user
 function bindings(c:RemoteVectorConfig):Record<string,string>{try{return JSON.parse(localStorage.getItem(bindingKey(c))||'{}')}catch{return {}}}
 export function isCompat(c:RemoteVectorConfig){return c.compatShared===true;}
 export function readCompatBinding(id:string,c:RemoteVectorConfig){return bindings(c)[id]||'';}
-export interface CompatPersonaPartition { personaId:string; count:number; }
+export interface CompatPersonaPartition { personaId:string; count:number; displayName?:string; }
+/** 读取云端为 persona 保存的显示名（表不存在或无权限时静默降级为无名称）。 */
+export async function listCompatPersonaLabels(c:RemoteVectorConfig):Promise<Record<string,string>> {
+  const authorization=await compatHeaders(c);
+  try{
+    const r=await fetch(new URL('/rest/v1/aion_persona_labels?select=persona_id,display_name',c.supabaseUrl).href,{headers:{apikey:c.supabaseAnonKey,...authorization}});
+    if(!r.ok) return {};
+    const rows=await r.json();
+    if(!Array.isArray(rows)) return {};
+    const out:Record<string,string>={};
+    for(const row of rows) if(typeof row?.persona_id==='string'&&typeof row?.display_name==='string'&&row.display_name) out[row.persona_id]=row.display_name;
+    return out;
+  }catch{return {};}
+}
+/** 保存/更新某个 persona 的显示名。名称只用于界面展示，不参与记忆匹配。 */
+export async function saveCompatPersonaLabel(c:RemoteVectorConfig,personaId:string,displayName:string):Promise<void> {
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(personaId)) throw new Error('角色编号格式不正确');
+  const name=displayName.trim();
+  if(!name) throw new Error('名称不能为空');
+  if(name.length>64) throw new Error('名称最多 64 个字符');
+  const authorization=await compatHeaders(c);
+  const r=await fetch(new URL('/rest/v1/aion_persona_labels?on_conflict=owner_id,persona_id',c.supabaseUrl).href,{
+    method:'POST',
+    headers:{apikey:c.supabaseAnonKey,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal',...authorization},
+    body:JSON.stringify([{persona_id:personaId,display_name:name}]),
+  });
+  if(!r.ok) throw new Error(await r.text());
+}
 /** 共享库没有角色名称注册表；这里只读取实际存在的 persona 分区及数量，不猜测名称。 */
 export async function listCompatPersonaPartitions(c:RemoteVectorConfig):Promise<CompatPersonaPartition[]> {
   const authorization=await compatHeaders(c);
@@ -23,7 +50,8 @@ export async function listCompatPersonaPartitions(c:RemoteVectorConfig):Promise<
     for(const row of rows) if(typeof row?.char_id==='string'&&row.char_id) result.set(row.char_id,(result.get(row.char_id)||0)+1);
     if(rows.length<1000) break;
   }
-  return [...result].map(([personaId,count])=>({personaId,count}));
+  const labels=await listCompatPersonaLabels(c).catch(()=>({} as Record<string,string>));
+  return [...result].map(([personaId,count])=>({personaId,count,displayName:labels[personaId]}));
 }
 export function compatPersona(charId:string|undefined,c:RemoteVectorConfig):string {const b=bindings(c);if(charId&&b[charId])return b[charId];throw new Error('共享库操作需要当前角色的明确绑定');}
 export function bindCompat(id:string,persona:string,c:RemoteVectorConfig){if(!id||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(persona))throw new Error('角色编号格式不正确');localStorage.setItem(bindingKey(c),JSON.stringify({...bindings(c),[id]:persona}));}

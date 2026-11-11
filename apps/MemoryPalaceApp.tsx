@@ -2,7 +2,7 @@ import { ContextBuilder } from '../utils/context';
 
 import MemoryMaintenancePanel from '../components/chat/MemoryMaintenancePanel';
 import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
-import { bindCompat, compatLogin, readCompatBinding, listCompatPersonaPartitions } from '../utils/memoryPalace/sullyosCompat';
+import { bindCompat, compatLogin, readCompatBinding, listCompatPersonaPartitions, saveCompatPersonaLabel } from '../utils/memoryPalace/sullyosCompat';
 import { MemoryTimeText } from '../components/MemoryTimeText';
 import { relativeTimeEdit } from '../utils/memoryPalace/relativeTime';
 import { MemoryContentEditor } from '../components/MemoryContentEditor';
@@ -927,7 +927,8 @@ export default function MemoryPalaceApp() {
     useEffect(()=>{setRvTestResult('');},[rvUrl,rvKey,rvPersona,rvCompat,activeCharacterId]);
     const [rvTesting, setRvTesting] = useState(false);
     const [rvSyncing, setRvSyncing] = useState(false);
-    const [rvPartitions,setRvPartitions]=useState<{personaId:string;count:number}[]>([]);
+    const [rvPartitions,setRvPartitions]=useState<{personaId:string;count:number;displayName?:string}[]>([]);
+    const [rvLabelDraft,setRvLabelDraft]=useState('');
     const [showInitSQL, setShowInitSQL] = useState(false);
     const remoteVectorReady = remoteVectorConfig.enabled && remoteVectorConfig.initialized;
 
@@ -3915,7 +3916,11 @@ create table if not exists memory_vectors (
                     </div>
 
                     </>}
-                    <div><label><input type="checkbox" checked={rvCompat} onChange={e=>setRvCompat(e.target.checked)}/>使用已有共享库兼容格式（无需初始化 SQL）</label>{rvCompat&&<div><p>向量模型必须为 BAAI/bge-m3，1024 维。</p><input className={inputClass} placeholder="云端角色分区编号（char_id）" value={rvPersona} onChange={e=>setRvPersona(e.target.value)}/><button className={inputClass} type="button" onClick={async()=>{try{const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true};const ps=await listCompatPersonaPartitions(c);setRvPartitions(ps);addToast(`读取到 ${ps.length} 个实际角色分区；共享库没有角色名称，不能自动命名`, 'info');}catch(e:any){addToast(`读取角色分区失败：${e.message}`,'error');}}}>读取云端实际角色分区</button>{rvPartitions.length>0&&<div style={{fontSize:10,color:'#64748b'}}>{rvPartitions.map(p=><button type="button" key={p.personaId} onClick={()=>setRvPersona(p.personaId)} style={{display:'block',border:0,background:'transparent',padding:'3px 0',cursor:'pointer'}}>{p.personaId}（{p.count}条记忆）</button>)}</div>}<input className={inputClass} type="email" placeholder="共享库邮箱" value={rvEmail} onChange={e=>setRvEmail(e.target.value)}/><input className={inputClass} type="password" placeholder="共享库密码（不保存）" value={rvPassword} onChange={e=>setRvPassword(e.target.value)}/></div>}</div>
+                    <div><label><input type="checkbox" checked={rvCompat} onChange={e=>setRvCompat(e.target.checked)}/>使用已有共享库兼容格式（无需初始化 SQL）</label>{rvCompat&&<div><p>向量模型必须为 BAAI/bge-m3，1024 维。</p><input className={inputClass} placeholder="云端角色分区编号（char_id）" value={rvPersona} onChange={e=>setRvPersona(e.target.value)}/><button className={inputClass} type="button" onClick={async()=>{try{const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true};const ps=await listCompatPersonaPartitions(c);setRvPartitions(ps);addToast(`读取到 ${ps.length} 个实际角色分区`, 'info');}catch(e:any){addToast(`读取角色分区失败：${e.message}`,'error');}}}>读取云端实际角色分区</button>{rvPartitions.length>0&&<div style={{fontSize:10,color:'#64748b'}}>{rvPartitions.map(p=><button type="button" key={p.personaId} onClick={()=>{setRvPersona(p.personaId);setRvLabelDraft(p.displayName||'');}} style={{display:'block',border:0,background:'transparent',padding:'3px 0',cursor:'pointer',textAlign:'left'}}>{p.displayName?`${p.displayName}（${p.count}条记忆） · ${p.personaId.slice(0,8)}`:`${p.personaId}（${p.count}条记忆）`}</button>)}
+                            <div style={{display:'flex',gap:4,marginTop:6}}>
+                              <input className={inputClass} placeholder="给这个分区起个名字，比如：夏里" value={rvLabelDraft} onChange={e=>setRvLabelDraft(e.target.value)}/>
+                              <button className={inputClass} type="button" disabled={!rvPersona||!rvLabelDraft.trim()} onClick={async()=>{try{const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true};await saveCompatPersonaLabel(c,rvPersona,rvLabelDraft);const ps=await listCompatPersonaPartitions(c);setRvPartitions(ps);addToast(`已命名为「${rvLabelDraft.trim()}」，存在云端`,'success');}catch(e:any){addToast(`保存名称失败：${e.message}`,'error');}}}>保存名称</button>
+                            </div></div>}<input className={inputClass} type="email" placeholder="共享库邮箱" value={rvEmail} onChange={e=>setRvEmail(e.target.value)}/><input className={inputClass} type="password" placeholder="共享库密码（不保存）" value={rvPassword} onChange={e=>setRvPassword(e.target.value)}/></div>}</div>
                     {/* Project URL & anon key */}
                     <div style={{ marginTop: 12 }}>
                         <label className={labelClass}>PROJECT URL</label>
