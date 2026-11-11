@@ -35,7 +35,7 @@ describe('tavern import',()=>{
  });
  it('retains Sully PNG compatibility',async()=>{
   const bytes=embedShareInPng(png,{format:'sullyos-share',version:1,kind:'character',title:'测试',author:'',restrictions:'',style:'paper',fileName:'card.json',mimeType:'application/json'},new TextEncoder().encode(JSON.stringify({type:'sully_character_card',name:'Sully'})));
-  expect((await readCharacterImport(new File([bytes],'s.png') as unknown as globalThis.File)).format).toBe('SullyOS');
+  expect((await readCharacterImport(new File([new Uint8Array(bytes).buffer],'s.png') as unknown as globalThis.File)).format).toBe('SullyOS');
  });
  it('replaces only supported macros safely',()=>expect(renderTavernText('{{char}} {{user}} {{random}}','$&','棠棠')).toBe('$& 棠棠 {{random}}'));
  it('warns about non-equivalent features',()=>{const r=convertTavernCard({...data,post_history_instructions:'末尾',extensions:{scripts:['x']},assets:[{}]});expect(r.warnings.length).toBeGreaterThan(3);expect(r.card.systemPrompt).toContain('末尾');});

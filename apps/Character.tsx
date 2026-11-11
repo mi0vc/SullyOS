@@ -173,6 +173,7 @@ const Character: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [cardPreview, setCardPreview] = useState<CardImportPreview | null>(null);
   const [cardGreeting, setCardGreeting] = useState(0);
+  const [cardGreetingTarget, setCardGreetingTarget] = useState<'offline' | 'online' | 'none'>('offline');
   const [cardBusy, setCardBusy] = useState(false);
   const cardBusyRef = useRef(false);
   const cardImportRef = useRef<HTMLInputElement>(null);
@@ -1153,7 +1154,7 @@ ${isInitialGeneration ? `
       e.target.value = '';
       if (!file || cardBusyRef.current) return;
       cardBusyRef.current = true; setCardBusy(true);
-      try { setCardPreview(await readCharacterImport(file)); setCardGreeting(0); }
+      try { setCardPreview(await readCharacterImport(file)); setCardGreeting(0); setCardGreetingTarget('offline'); }
       catch (err: any) { addToast(err?.message || '角色卡解析失败', 'error'); }
       finally { cardBusyRef.current = false; setCardBusy(false); }
   };
@@ -1198,8 +1199,9 @@ ${isInitialGeneration ? `
               mountedWorldbooks: incomingMounted,
           } as CharacterProfile;
 
+          if (newChar.tavernImport) newChar.tavernImport = { ...newChar.tavernImport, greetingTarget: cardGreetingTarget, selectedGreeting: cardGreeting };
           await DB.saveCharacter(newChar);
-          const greeting = cardGreeting < 0 ? '' : cardPreview.greetings[cardGreeting];
+          const greeting = cardGreetingTarget !== 'online' || cardGreeting < 0 ? '' : cardPreview.greetings[cardGreeting];
           let greetingFailed = false;
           if (greeting) {
               try { await DB.saveMessage({ charId: newChar.id, role: 'assistant', type: 'text', content: renderTavernText(greeting, newChar.name, userProfile.name) }); }
@@ -1235,6 +1237,10 @@ ${isInitialGeneration ? `
            {cardPreview.notes && <details><summary>作者备注（不注入聊天）</summary><pre className="whitespace-pre-wrap">{cardPreview.notes}</pre></details>}
            <details><summary>查看角色核心设定</summary><pre className="whitespace-pre-wrap break-words">{cardPreview.card.systemPrompt}</pre></details>
            {cardPreview.greetings.length > 0 && <div>
+             <label>开场白用途<select className="w-full border rounded p-2 mb-3" value={cardGreetingTarget} onChange={e => setCardGreetingTarget(e.target.value as 'offline' | 'online' | 'none')}>
+               <option value="offline">线下见面使用（默认）</option><option value="online">写入线上聊天</option><option value="none">仅保存，暂不使用</option>
+             </select></label>
+             <p className="text-xs text-slate-500 mb-2">线下开场在「见面 → 使用角色卡开场」中开始，不会自动写入线上聊天。</p>
              <label>选择开场白<select className="w-full border rounded p-2" value={cardGreeting} onChange={e => setCardGreeting(Number(e.target.value))}>
                <option value={-1}>不写入开场白</option>
                {cardPreview.greetings.map((g,i) => <option key={i} value={i}>{i === 0 ? '默认' : `备选 ${i}`}：{g.slice(0,60)}</option>)}
