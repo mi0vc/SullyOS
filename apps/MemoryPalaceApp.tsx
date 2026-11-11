@@ -3938,6 +3938,15 @@ create table if not exists memory_vectors (
                     </div>
 
                     </>}
+                    <div style={{margin:'12px 0',padding:12,border:'1px solid #e9d5ff',borderRadius:10}}>
+                        <label htmlFor="cloud-sync-character">选择要上传的本地角色</label>
+                        <select id="cloud-sync-character" className={inputClass} value={activeCharacterId || ''} disabled={rvSyncing} onChange={e=>{setActiveCharacterId(e.target.value);setRvSyncReport('');}}>
+                            <option value="" disabled>请选择角色</option>
+                            {characters.map(c=><option key={c.id} value={c.id}>{c.name} · {c.id.slice(0,8)}</option>)}
+                        </select>
+                        <p style={{fontSize:12}}>上传范围：仅所选角色的全部本地向量，不上传其他角色。当前不是增量同步。</p>
+                        <p style={{fontSize:12,overflowWrap:'anywhere'}}>已保存的云端绑定：{(()=>{try{return readCompatBinding(activeCharacterId || '',remoteVectorConfig) || '未绑定（新角色请创建独立分区）';}catch{return '请先登录共享库';}})()}</p>
+                    </div>
                     {rvSyncReport && <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',fontSize:12}}>{rvSyncReport}</pre>}
                     {rvCompat && <button type="button" className={inputClass} disabled={rvSyncing || !activeCharacterId} onClick={handleCreateCloudPersona}>为当前角色创建独立云端分区</button>}
                     <div><label><input type="checkbox" checked={rvCompat} onChange={e=>setRvCompat(e.target.checked)}/>使用已有共享库兼容格式（无需初始化 SQL）</label>{rvCompat&&<div><p>向量模型必须为 BAAI/bge-m3，1024 维。</p><input className={inputClass} placeholder="云端角色分区编号（char_id）" value={rvPersona} onChange={e=>setRvPersona(e.target.value)}/><button className={inputClass} type="button" onClick={async()=>{try{const c={enabled:true,initialized:false,supabaseUrl:rvUrl,supabaseAnonKey:rvKey,compatShared:true};const ps=await listCompatPersonaPartitions(c);setRvPartitions(ps);addToast(`读取到 ${ps.length} 个实际角色分区`, 'info');}catch(e:any){addToast(`读取角色分区失败：${e.message}`,'error');}}}>读取云端实际角色分区</button>{rvPartitions.length>0&&<div style={{fontSize:10,color:'#64748b'}}>{rvPartitions.map(p=><button type="button" key={p.personaId} onClick={()=>{setRvPersona(p.personaId);setRvLabelDraft(p.displayName||'');}} style={{display:'block',border:0,background:'transparent',padding:'3px 0',cursor:'pointer',textAlign:'left'}}>{p.displayName?`${p.displayName}（${p.count}条记忆） · ${p.personaId.slice(0,8)}`:`${p.personaId}（${p.count}条记忆）`}</button>)}
@@ -3998,7 +4007,7 @@ create table if not exists memory_vectors (
                     {remoteVectorReady && <button className={inputClass} onClick={() => { void pullCloudMemories(); }} disabled={rvSyncing}>{rvSyncing ? '正在读取云端记忆...' : '读取云端记忆到记忆宫殿'}</button>}
                     {/* 已启用后的操作 */}
                     {remoteVectorReady && (
-                        <button onClick={handleSyncToRemote} disabled={rvSyncing}
+                        <button onClick={handleSyncToRemote} disabled={rvSyncing || !activeCharacterId}
                             style={{
                                 width: '100%', marginTop: 8, padding: '10px 0', borderRadius: 12,
                                 border: '1px solid #e9d5ff', fontWeight: 600, fontSize: 12,
