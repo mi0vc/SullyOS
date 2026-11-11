@@ -351,6 +351,7 @@ export const MemoryVectorDB = {
         }
     },
 
+    /* duplicate removed: the full indexed implementation is defined below */
     getByMemoryId: async (memoryId: string): Promise<MemoryVector | undefined> => {
         const v = await getByKey<MemoryVector>(STORE_MEMORY_VECTORS, memoryId);
         if (!v) return undefined;

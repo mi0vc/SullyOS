@@ -927,6 +927,7 @@ export default function MemoryPalaceApp() {
     useEffect(()=>{setRvTestResult('');},[rvUrl,rvKey,rvPersona,rvCompat,activeCharacterId]);
     const [rvTesting, setRvTesting] = useState(false);
     const [rvSyncing, setRvSyncing] = useState(false);
+    const [rvSyncProgress, setRvSyncProgress] = useState<{ done: number; total: number } | null>(null);
     const [rvPartitions,setRvPartitions]=useState<{personaId:string;count:number;displayName?:string}[]>([]);
     const [rvLabelDraft,setRvLabelDraft]=useState('');
     const [showInitSQL, setShowInitSQL] = useState(false);
@@ -1854,32 +1855,33 @@ export default function MemoryPalaceApp() {
 
     // 远程向量：同步本地到远程
     const handleSyncToRemote = async () => {
+        if (!activeCharacterId) { addToast('请先选择要同步的角色', 'error'); return; }
         setRvSyncing(true);
+        setRvSyncProgress({ done: 0, total: 0 });
         trackEvent('同步记忆向量到云端');
         try {
             const { syncLocalToRemote } = await import('../utils/memoryPalace/supabaseVector');
-            const { MemoryNodeDB } = await import('../utils/memoryPalace/db');
+            const { MemoryNodeDB, MemoryVectorDB } = await import('../utils/memoryPalace/db');
+            const selectedCharId = activeCharacterId;
             const result = await syncLocalToRemote(
                 remoteVectorConfig,
                 async () => {
-                    const allVectors = await (await import('../utils/db')).openDB().then(db => new Promise<any[]>((resolve, reject) => {
-                        const tx = db.transaction('memory_vectors', 'readonly');
-                        const req = tx.objectStore('memory_vectors').getAll();
-                        req.onsuccess = () => resolve(req.result || []);
-                        req.onerror = () => reject(req.error);
-                    }));
+                    const vectors = await MemoryVectorDB.getAllByCharId(selectedCharId);
                     const items = [];
-                    for (const v of allVectors) {
+                    for (const v of vectors) {
                         const node = await MemoryNodeDB.getById(v.memoryId);
-                        if (node) items.push({ memoryId: v.memoryId, charId: node.charId, vector: v.vector, node, dimensions: v.dimensions, model: v.model });
+                        if (node?.charId === selectedCharId && node.embedded) items.push({ memoryId: v.memoryId, charId: selectedCharId, vector: v.vector, node, dimensions: v.dimensions, model: v.model });
                     }
                     return items;
                 },
-                () => {},
+                (done, total) => setRvSyncProgress({ done, total }),
             );
-            addToast(`同步完成: ${result.synced} 条成功, ${result.conflicts || 0} 条冲突, ${result.failed} 条失败`, (result.failed || result.conflicts) > 0 ? 'error' : 'success');
+            const failedSample = result.failedIds.slice(0, 5).join('、');
+            const suffix = failedSample ? `；失败编号：${failedSample}${result.failedIds.length > 5 ? ' 等' : ''}` : '';
+            addToast(`当前角色同步完成: ${result.synced} 条成功, ${result.conflicts} 条冲突, ${result.failed} 条失败${suffix}`, (result.failed || result.conflicts) > 0 ? 'error' : 'success');
         } catch (e: any) { addToast(`同步失败: ${e.message}`, 'error'); }
         setRvSyncing(false);
+        setRvSyncProgress(null);
     };
 
     // 远程向量：复制初始化 SQL
@@ -3983,7 +3985,7 @@ create table if not exists memory_vectors (
                                 opacity: rvSyncing ? 0.5 : 1,
                             }}
                         >
-                            {rvSyncing ? '同步中...' : (
+                            {rvSyncing ? `同步中 ${rvSyncProgress?.done ?? 0}/${rvSyncProgress?.total ?? 0}` : (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                                     <Icon name="refresh" size={13} />
                                     <span>同步本地向量到远程</span>
