@@ -2770,6 +2770,7 @@ export interface MemoryPalaceWaterlineConfig {
 }
 
 export interface CharacterProfile {
+  tavernImport?: { version: string; author: string; notes: string; tags: string[]; characterVersion: string; greetings: string[]; warnings: string[] };
   userPersona?: import('./utils/userPersona').CharacterUserPersona;
   /** Local default for this character's dialogue; absent means follow Settings. Never shared in cards. */
   dialogueApi?: DialogueApiConfig;

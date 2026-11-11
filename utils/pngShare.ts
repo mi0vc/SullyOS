@@ -148,3 +148,5 @@ export async function readShareText(file: File, expectedKind: ShareKind): Promis
 
 /** Distinguish a plain PNG from a share card; corrupt cards still fail validation. */
 export function pngHasShare(bytes:Uint8Array):boolean { return chunks(bytes).some(chunk=>chunk.type===CHUNK); }
+
+export function readValidatedPngChunks(bytes: Uint8Array) { return chunks(bytes); }

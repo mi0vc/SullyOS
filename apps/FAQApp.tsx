@@ -62,7 +62,7 @@ const FAQ_DATA = [
     {
         q: "5. 气泡主题 / 导入角色",
         reason: "想要个性化？想换角色？",
-        solution: "**换气泡**：\n点顶部的名字 → 下滑找“气泡样式”。\n\n**导角色**：\n支持本模拟器导出的原格式文件与 PNG 分享卡原图。PNG 请传原文件，截图或压缩图不能恢复其中的数据；不兼容其他小手机角色卡。",
+        solution: "**换气泡**：\n点顶部的名字 → 下滑找“气泡样式”。\n\n**导角色**：\n支持本模拟器导出的原格式文件与 PNG 分享卡原图。PNG 请传原文件，截图或压缩图不能恢复其中的数据；支持酒馆 PNG / JSON 旧版、V2、V3 角色卡，导入前可预览、选择开场白并查看兼容提示；暂不支持 YAML / CHARX / BYAF 和酒馆插件脚本。不兼容其他小手机的私有角色卡。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3a8.png",
         color: "bg-purple-50 text-purple-700"
     },

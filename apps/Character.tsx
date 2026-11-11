@@ -38,7 +38,7 @@ import { COMMON_TIMEZONES } from '../utils/timezone';
 import { toMountedWorldbook } from '../utils/worldbook';
 import { stripSensitiveCardFields } from '../utils/characterCard';
 import { shareOrDownloadFile } from '../utils/shareExport';
-import { readShareText } from '../utils/pngShare';
+import { readCharacterImport, renderTavernText, type CardImportPreview } from '../utils/tavernCard';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
@@ -171,6 +171,10 @@ const Character: React.FC = () => {
       return characterLaunch.subscribe(apply);
   }, [characters]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [cardPreview, setCardPreview] = useState<CardImportPreview | null>(null);
+  const [cardGreeting, setCardGreeting] = useState(0);
+  const [cardBusy, setCardBusy] = useState(false);
+  const cardBusyRef = useRef(false);
   const cardImportRef = useRef<HTMLInputElement>(null);
   
   // Race Condition Guards
@@ -1146,16 +1150,18 @@ ${isInitialGeneration ? `
 
   const handleImportCard = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (!file) return;
-
+      e.target.value = '';
+      if (!file || cardBusyRef.current) return;
+      cardBusyRef.current = true; setCardBusy(true);
+      try { setCardPreview(await readCharacterImport(file)); setCardGreeting(0); }
+      catch (err: any) { addToast(err?.message || '角色卡解析失败', 'error'); }
+      finally { cardBusyRef.current = false; setCardBusy(false); }
+  };
+  const confirmImportCard = async () => {
+      if (!cardPreview || cardBusyRef.current) return;
+      cardBusyRef.current = true; setCardBusy(true);
       try {
-          const json = await readShareText(file, 'character');
-          const data: CharacterExportData = JSON.parse(json);
-
-          if (data.type !== 'sully_character_card') {
-              throw new Error('无效的角色卡文件');
-          }
-
+          const data = cardPreview.card;
           // 导入侧同样剥离凭据 / 美化 / 语言 / 运行时状态：即便对方给的是旧版
           // 角色卡（把 API 密钥等私密字段一起打包了），也不会被写进本地角色，
           // 不会用发卡人的 key / 主题 / 语言偏好覆盖你自己的。清单见 utils/characterCard.ts。
@@ -1193,6 +1199,13 @@ ${isInitialGeneration ? `
           } as CharacterProfile;
 
           await DB.saveCharacter(newChar);
+          const greeting = cardGreeting < 0 ? '' : cardPreview.greetings[cardGreeting];
+          let greetingFailed = false;
+          if (greeting) {
+              try { await DB.saveMessage({ charId: newChar.id, role: 'assistant', type: 'text', content: renderTavernText(greeting, newChar.name, userProfile.name) }); }
+              catch { greetingFailed = true; }
+          }
+          setCardPreview(null);
           trackEvent('导入角色卡');
           // 不要调用 addCharacter()——它不是"刷新"，而是真的新建一个空白
           // "New Character" 并写进 DB，reload 后就会多出一张空白卡。
@@ -1201,18 +1214,38 @@ ${isInitialGeneration ? `
           setTimeout(() => window.location.reload(), 500);
 
           const wbToastSuffix = importedWbCount > 0 ? `，并同步 ${importedWbCount} 本世界书` : '';
-          addToast(`角色 ${newChar.name} 导入成功${wbToastSuffix}`, 'success');
+          addToast(greetingFailed ? `角色 ${newChar.name} 已保存，但开场白写入失败，请勿重复导入` : `角色 ${newChar.name} 导入成功${wbToastSuffix}`, greetingFailed ? 'error' : 'success');
 
       } catch (err: any) {
           console.error(err);
           addToast(err.message || '导入失败', 'error');
       } finally {
-          if (cardImportRef.current) cardImportRef.current.value = '';
+          cardBusyRef.current = false; setCardBusy(false);
       }
   };
 
   return (
     <div className="h-full w-full bg-slate-50/30 font-light relative">
+       <Modal isOpen={!!cardPreview} title="角色卡导入预览" onClose={() => { if (!cardBusy) setCardPreview(null); }}>
+         {cardPreview && <div className="space-y-3 max-h-[70vh] overflow-y-auto text-sm">
+           <div className="font-bold">{cardPreview.card.name} · {cardPreview.format}</div>
+           <div>新建角色，不覆盖已有角色。内嵌世界书：{cardPreview.card.mountedWorldbooks?.length || 0} 条。</div>
+           {cardPreview.card.avatar && <TokenImg value={cardPreview.card.avatar} className="w-20 h-20 object-cover rounded-xl" />}
+           {cardPreview.author && <div>作者：{cardPreview.author}</div>}
+           {cardPreview.notes && <details><summary>作者备注（不注入聊天）</summary><pre className="whitespace-pre-wrap">{cardPreview.notes}</pre></details>}
+           <details><summary>查看角色核心设定</summary><pre className="whitespace-pre-wrap break-words">{cardPreview.card.systemPrompt}</pre></details>
+           {cardPreview.greetings.length > 0 && <div>
+             <label>选择开场白<select className="w-full border rounded p-2" value={cardGreeting} onChange={e => setCardGreeting(Number(e.target.value))}>
+               <option value={-1}>不写入开场白</option>
+               {cardPreview.greetings.map((g,i) => <option key={i} value={i}>{i === 0 ? '默认' : `备选 ${i}`}：{g.slice(0,60)}</option>)}
+             </select></label>
+             <pre className="whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{cardPreview.greetings[cardGreeting]}</pre>
+           </div>}
+           <ul className="text-amber-700 space-y-1">{cardPreview.warnings.map((w,i) => <li key={i}>• {w}</li>)}</ul>
+           <button className="w-full rounded-xl bg-violet-600 text-white p-3 disabled:opacity-50" disabled={cardBusy} onClick={confirmImportCard}>{cardBusy ? '正在导入…' : '确认创建新角色'}</button>
+         </div>}
+       </Modal>
+
        {view === 'list' ? (
            <div className="flex flex-col h-full animate-fade-in relative"
                 style={{ background: 'linear-gradient(180deg, #f5f2fb 0%, #ece6f6 100%)' }}>
