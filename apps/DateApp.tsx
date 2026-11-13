@@ -1,4 +1,3 @@
-import { renderTavernText } from '../utils/tavernMacros';
 import { resolveDialogueApi } from '../utils/characterApi';
 import { useDateMessageHistory } from '../utils/useDateMessageHistory';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
@@ -138,8 +137,6 @@ const DateApp: React.FC = () => {
     const [historyEditContent, setHistoryEditContent] = useState('');
     
     const encounterIdRef = useRef(resumed?.encounterId ?? '');
-    const [cardOpeningIndex, setCardOpeningIndex] = useState(0);
-    const [usingCardOpening, setUsingCardOpening] = useState(false);
     const [openingMode, setOpeningMode] = useState<'approach' | 'invite'>('approach');
     const [showEntryNotice, setShowEntryNotice] = useState(() => {
         try { return localStorage.getItem('sully-date-entry-guide-v1') !== 'seen'; }
@@ -303,8 +300,6 @@ const DateApp: React.FC = () => {
     // 每次进入独立记次；模型上下文仍由共享管线决定。
     const handleCharClick = (c: CharacterProfile) => {
         clearDateResumeAttempt();
-        setUsingCardOpening(false);
-        setCardOpeningIndex(Math.max(0, c.tavernImport?.selectedGreeting ?? 0));
         setActiveCharacterId(c.id);
         encounterIdRef.current = crypto.randomUUID();
         setDateMessages([]);
@@ -349,7 +344,7 @@ const DateApp: React.FC = () => {
                         role: 'assistant',
                         type: 'text',
                         content: peekStatus,
-                        metadata: { source: 'date', isOpening: true, dateEncounterId: enteringEncounterId, dateOpeningMode: openingMode, ...(usingCardOpening ? { tavernCardOpening: true, tavernGreetingIndex: cardOpeningIndex } : {}) }
+                        metadata: { source: 'date', isOpening: true, dateEncounterId: enteringEncounterId, dateOpeningMode: openingMode }
                     });
                     markDateTurnDirty(char);
                     if (encounterIdRef.current !== enteringEncounterId) return;
@@ -375,7 +370,6 @@ const DateApp: React.FC = () => {
     // --- Peek (Generation) Logic ---
     const startPeek = async (c: CharacterProfile, selectedOpening: 'approach' | 'invite' = openingMode) => {
         const requestId = ++peekRequestRef.current;
-        setUsingCardOpening(false);
         setOpeningMode(selectedOpening);
         setActiveCharacterId(c.id);
         setMode('peek');
@@ -576,10 +570,6 @@ const DateApp: React.FC = () => {
         // 先删消息再报 "Context lost"（开场白被吞），即使上一条恰好是 user 侥幸续上，
         // 新消息也不带 isOpening，阅读模式会从上一次见面的开场开始切片，表现为
         // 「新见面只有立绘模式是新剧情，阅读模式全是旧剧情」。
-        if (lastMsg.metadata?.tavernCardOpening === true) {
-            addToast('这是角色卡原文开场，不调用模型重写。可返回见面入口选择其他开场白。', 'info');
-            return lastMsg.content;
-        }
         if (lastMsg.metadata?.isOpening === true) {
             const { messages } = (await DatePrompts.buildPeekPayload({
                 char,
@@ -1122,27 +1112,12 @@ const DateApp: React.FC = () => {
 
     if (mode === 'entry' && char) {
         return (
-            <div className="h-full w-full bg-black text-white flex flex-col px-8 pb-12 pt-16 overflow-y-auto">
+            <div className="h-full w-full bg-black text-white flex flex-col px-8 pb-12 pt-16">
                 <button onClick={handleBack} className="self-start p-3 text-neutral-400" aria-label="返回"><CaretLeft size={22} /></button>
                 <div className="flex-1 flex flex-col justify-center max-w-sm w-full mx-auto gap-4">
                     <TokenImg value={char.avatar} className="w-20 h-20 rounded-full object-cover mb-3" alt={char.name} />
                     <h2 className="text-3xl font-light mb-2">{char.name}</h2>
                     <p className="text-sm text-neutral-400 mb-6">这次，怎样见面？</p>
-                    {!!char.tavernImport?.greetings?.length && <div className="rounded-2xl border border-violet-500 p-4 space-y-3">
-                        <label className="block text-sm">角色卡开场白
-                          <select value={cardOpeningIndex} onChange={e => setCardOpeningIndex(Number(e.target.value))} className="block w-full bg-neutral-900 text-white p-2 mt-2 rounded">
-                            {char.tavernImport.greetings.map((g,i) => <option key={i} value={i}>{i===0?'默认':`备选 ${i}`}：{g.slice(0,40)}</option>)}
-                          </select>
-                        </label>
-                        <p className="text-xs text-neutral-400">使用卡片原文，不生成、不清空记忆。预览后确认才保存到本次见面。</p>
-                        <button className="w-full rounded-xl bg-violet-700 p-3" onClick={() => {
-                            const greeting = char.tavernImport?.greetings[cardOpeningIndex];
-                            if (!greeting) { addToast('请选择有效开场白', 'error'); return; }
-                            ++peekRequestRef.current;
-                            setUsingCardOpening(true); setPeekLoading(false); setHasSavedOpening(false);
-                            setPeekStatus(renderTavernText(greeting, char.name, userProfile.name)); setMode('peek');
-                        }}>使用角色卡开场</button>
-                    </div>}
                     <button onClick={() => startPeek(char, 'approach')} className="text-left rounded-2xl border border-neutral-700 px-6 py-5 hover:bg-neutral-900">
                         <span className="block text-lg">靠近他</span><span className="block text-xs text-neutral-400 mt-2">看看他此刻在做什么，再走过去</span>
                     </button>
@@ -1183,8 +1158,8 @@ const DateApp: React.FC = () => {
                         <div className="shrink-0 flex flex-col items-center gap-6">
                              <div className="w-full flex gap-3">
                                  {/* 修改这里：调用 handleEnterSession 确保开场白被保存 */}
-                                 <button onClick={handleEnterSession} className="flex-1 h-14 bg-white text-black rounded-full font-bold tracking-[0.1em] text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-95 transition-transform hover:bg-neutral-200">{usingCardOpening ? '以此开场开始见面' : openingMode === 'invite' ? '见到他' : '走过去'}</button>
-                                 <button aria-label={usingCardOpening ? '重新选择角色卡开场' : '重新感知'} onClick={() => { if (usingCardOpening) { setMode('entry'); return; } trackEvent('重新感知一次角色状态'); startPeek(char); }} className="w-14 h-14 bg-neutral-800 text-white rounded-full flex items-center justify-center border border-neutral-700 shadow-lg active:scale-90 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button>
+                                 <button onClick={handleEnterSession} className="flex-1 h-14 bg-white text-black rounded-full font-bold tracking-[0.1em] text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-95 transition-transform hover:bg-neutral-200">{openingMode === 'invite' ? '见到他' : '走过去'}</button>
+                                 <button onClick={() => { trackEvent('重新感知一次角色状态'); startPeek(char); }} className="w-14 h-14 bg-neutral-800 text-white rounded-full flex items-center justify-center border border-neutral-700 shadow-lg active:scale-90 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button>
                              </div>
                              <div className="flex flex-col items-center gap-3 text-[10px] text-neutral-600 font-medium tracking-wider"><button onClick={() => { setPreviousMode('peek'); setMode('settings'); trackEvent('打开见面设置面板', { from: 'peek' }); }} className="hover:text-neutral-400 transition-colors">布置场景 / 设定立绘</button><button onClick={handleBack} className="hover:text-neutral-400 transition-colors">悄悄离开</button></div>
                         </div>

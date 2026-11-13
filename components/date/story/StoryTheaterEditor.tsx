@@ -88,7 +88,7 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
         setSaving(true);
         const archiveAfter = Math.max(2, Math.min(200, Number(draft.archiveAfter) || 40));
         const archiveKeepRecent = Math.max(1, Math.min(archiveAfter - 1, Number(draft.archiveKeepRecent) || 5));
-        try { await onSave({ ...draft, title: draft.title.trim(), premise: draft.premise.trim(), carryCharacterMemory: draft.writesToCharacterMemory || draft.carryCharacterMemory, archiveAfter, archiveKeepRecent, presetId: preset?.id || presets[0]?.id, updatedAt: Date.now() }); }
+        try { await onSave({ ...draft, cardOpening: draft.cardOpening && draft.characterIds.includes(draft.cardOpening.characterId) ? draft.cardOpening : undefined, title: draft.title.trim(), premise: draft.premise.trim(), carryCharacterMemory: draft.writesToCharacterMemory || draft.carryCharacterMemory, archiveAfter, archiveKeepRecent, presetId: preset?.id || presets[0]?.id, updatedAt: Date.now() }); }
         finally { setSaving(false); }
     };
 
@@ -106,6 +106,24 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
                 <label className='block mt-2'><span className='text-[10px] font-bold text-slate-500'>标题 · 必填</span><input value={draft.title} onChange={event => update('title', event.target.value)} placeholder='剧情名称' className='mt-1 w-full bg-transparent text-3xl font-serif font-semibold outline-none placeholder:text-slate-300' /></label>
                 <label className='block mt-5'><span className='text-[10px] font-bold text-slate-500'>剧情介绍 · 可选</span><textarea value={draft.premise} onChange={event => update('premise', event.target.value)} placeholder='不填写也能直接开场；也可以写地点、冲突或必须守住的设定……' className='mt-2 w-full min-h-28 p-4 rounded-2xl bg-white border border-slate-200 text-sm leading-7 resize-y outline-none' /></label>
                 <div className='mt-5'><div className='text-[10px] font-bold text-slate-500'>谁先落笔</div><div className='mt-2 grid grid-cols-2 p-1 rounded-xl bg-slate-200'><button disabled={maskLocked} onClick={() => update('openingMode', 'user')} className={`py-2.5 rounded-lg text-[11px] font-bold disabled:opacity-60 ${(draft.openingMode || 'user') === 'user' ? 'bg-white shadow-sm text-violet-700' : 'text-slate-500'}`}>我先写</button><button disabled={maskLocked} onClick={() => update('openingMode', 'assistant')} className={`py-2.5 rounded-lg text-[11px] font-bold disabled:opacity-60 ${draft.openingMode === 'assistant' ? 'bg-white shadow-sm text-violet-700' : 'text-slate-500'}`}>故事先写</button></div><p className='mt-2 text-[10px] text-slate-400'>{draft.openingMode === 'assistant' ? '进入后可直接让故事根据标题与介绍写出第一幕。' : '进入后由你用当前身份写下第一句话。'}</p></div>
+                <div className='mt-5 p-4 bg-white rounded-2xl border border-violet-200'>
+                    <label className='block text-xs font-bold'>使用酒馆角色卡开场
+                      <select disabled={maskLocked || pendingLayers !== 0} className='mt-2 w-full border rounded p-2 text-xs'
+                        value={draft.cardOpening ? JSON.stringify([draft.cardOpening.characterId,draft.cardOpening.greetingIndex]) : ''}
+                        onChange={e => {
+                          if (!e.target.value) { update('cardOpening', undefined); return; }
+                          const [id,index] = JSON.parse(e.target.value);
+                          const actor = actors.find(c => c.id === id);
+                          const content = actor?.tavernImport?.greetings[index];
+                          if (content) setDraft(current => ({...current, openingMode:'assistant', cardOpening:{characterId:id,greetingIndex:index,content}}));
+                        }}>
+                        <option value=''>不使用角色卡开场</option>
+                        {actors.flatMap(actor => (actor.tavernImport?.greetings || []).map((g,i) => <option key={`${actor.id}:${i}`} value={JSON.stringify([actor.id,i])}>{actor.name} · {i===0?'默认':`备选 ${i}`}：{g.slice(0,45)}</option>))}
+                      </select>
+                    </label>
+                    <p className='mt-2 text-xs text-slate-500'>先在下方选择参与角色，再选卡片开场。仅用于尚未开始的新剧情；不生成、不改写原文，不影响陪伴历史。</p>
+                    {draft.cardOpening && <pre className='mt-3 max-h-60 overflow-y-auto whitespace-pre-wrap text-xs leading-6'>{draft.cardOpening.content}</pre>}
+                </div>
             </section>
             <section className='pt-6 border-t border-slate-200'>
                 <div className='text-[9px] tracking-[.22em] uppercase font-bold text-violet-500'>02 / Cast</div><h2 className='mt-1 text-lg font-semibold'>让谁参与</h2>

@@ -1,3 +1,4 @@
+import { renderTavernText } from '../../../utils/tavernMacros';
 import {meetingAppearance} from '../../../utils/meetingAppearance';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadStoryActorContext, replaceStoryTheaterReply, STORY_REROLL_INSTRUCTION } from '../../../utils/storyTheaterReply';
@@ -641,6 +642,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             const before = (await DB.getMessagesByCharId(threadId, true))
                 .filter(message => message.metadata?.source === 'story_theater')
                 .sort((a, b) => a.id - b.id);
+            if (before.length === 0 && entry.cardOpening && !rerollTarget) {
+                const actor = actors.find(c => c.id === entry.cardOpening?.characterId);
+                if (!actor) throw new Error('开场白所属角色不在本剧情中，请在剧情设置重新选择');
+                await saveCentralAndMirrors('assistant', renderTavernText(entry.cardOpening.content, actor.name, mask.name), { theaterCardOpening: true });
+                await loadMessages();
+                return;
+            }
             const latest = before[before.length - 1];
             const isReroll = Boolean(rerollTarget && latest?.id === rerollTarget.id && latest.role === 'assistant' && !mirrorArchived(latest, entry));
             if (rerollTarget && !isReroll) return;
@@ -807,7 +815,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
 
     const archivedCount = messages.filter(message => mirrorArchived(message, entry)).length;
     const pendingRetryInput = getPendingStoryRetryInput(messages);
-    const canWriteOpening = messages.length === 0 && entry.openingMode === 'assistant';
+    const canWriteOpening = messages.length === 0 && (entry.openingMode === 'assistant' || !!entry.cardOpening);
     const filledAffinityActorIds = actors.filter(actor => {
         const draft = affinityDrafts[actor.id];
         return Boolean(draft && (draft.delta !== 0 || draft.reason.trim()));
@@ -849,8 +857,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 {messages.length === 0 ? <section className='py-10 border-y border-slate-200'>
                     <div className='text-[9px] tracking-[.25em] uppercase font-bold text-violet-500'>Opening note</div>
                     <h2 className='mt-3 text-3xl font-serif font-semibold leading-tight'>{entry.title}</h2>
-                    <p className='mt-5 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{entry.premise || (canWriteOpening ? '人物与世界已经就位，可以让故事先写下第一幕。' : '写下第一句话，让人物走进这座只属于本条剧情的剧场。')}</p>
-                    <p className='mt-6 text-[10px] text-slate-400'>{canWriteOpening ? '输入框留空，点击推进即可开场' : '这一幕由你先落笔'}</p>
+                    <p className='mt-5 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{entry.cardOpening?.content || entry.premise || (canWriteOpening ? '人物与世界已经就位，可以让故事先写下第一幕。' : '写下第一句话，让人物走进这座只属于本条剧情的剧场。')}</p>
+                    <p className='mt-6 text-[10px] text-slate-400'>{canWriteOpening ? '输入框留空，点击推进即可开场（已选角色卡时使用原文）' : '这一幕由你先落笔'}</p>
                 </section> : entry.writesToCharacterMemory && <div className='mb-8 py-3 border-y border-amber-200 text-center text-[11px] text-amber-700'>和朋友们已经分别相处了一段时间……</div>}
 
                 {pageCount > 1 && <StoryPagination className='mb-4' page={messagePage} pageCount={pageCount} onChange={setMessagePage} />}
@@ -903,7 +911,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             <div className='max-w-2xl mx-auto'>
                 {memoryStatus && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div>}
                 {!sending && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
-                {!sending && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}
+                {!sending && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进开始第一幕；已选角色卡将直接使用原文</div>}
                 {affinityEnabled && <div className='mb-2 overflow-hidden rounded-2xl border border-rose-200 bg-rose-50/70'>
                     <button type='button' aria-expanded={showAffinityInput} onClick={() => setShowAffinityInput(value => !value)} className='w-full px-3 py-2.5 flex items-center gap-2 text-left'>
                         <HeartStraight size={15} weight={filledAffinityActorIds.length > 0 ? 'fill' : 'regular'} className='text-rose-500' />

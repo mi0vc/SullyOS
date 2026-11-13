@@ -2294,6 +2294,7 @@ export interface StoryTheaterEntry {
     premise: string;
     /** 谁写下本剧情第一段：用户当前身份或模型故事正文。 */
     openingMode?: 'user' | 'assistant';
+    cardOpening?: { characterId: string; greetingIndex: number; content: string };
     /** 本剧情中用户执笔的身份；缺省时使用真实用户档案。 */
     mask?: StoryTheaterMaskSelection;
     characterIds: string[];

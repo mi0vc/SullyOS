@@ -1238,9 +1238,9 @@ ${isInitialGeneration ? `
            <details><summary>查看角色核心设定</summary><pre className="whitespace-pre-wrap break-words">{cardPreview.card.systemPrompt}</pre></details>
            {cardPreview.greetings.length > 0 && <div>
              <label>开场白用途<select className="w-full border rounded p-2 mb-3" value={cardGreetingTarget} onChange={e => setCardGreetingTarget(e.target.value as 'offline' | 'online' | 'none')}>
-               <option value="offline">线下见面使用（默认）</option><option value="online">写入线上聊天</option><option value="none">仅保存，暂不使用</option>
+               <option value="offline">剧情开场使用（默认）</option><option value="online">写入线上聊天</option><option value="none">仅保存，暂不使用</option>
              </select></label>
-             <p className="text-xs text-slate-500 mb-2">线下开场在「见面 → 使用角色卡开场」中开始，不会自动写入线上聊天。</p>
+             <p className="text-xs text-slate-500 mb-2">剧情开场在「见面 → 剧情 → 新增剧情」中选择，不会写入陪伴或线上聊天。</p>
              <label>选择开场白<select className="w-full border rounded p-2" value={cardGreeting} onChange={e => setCardGreeting(Number(e.target.value))}>
                <option value={-1}>不写入开场白</option>
                {cardPreview.greetings.map((g,i) => <option key={i} value={i}>{i === 0 ? '默认' : `备选 ${i}`}：{g.slice(0,60)}</option>)}
